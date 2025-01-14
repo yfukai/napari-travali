@@ -64,7 +64,7 @@ TRANSITIONS = [
         "trigger": "track_clicked",
         "source": ViewerState.LABEL_SWITCH,
         "dest": ViewerState.LABEL_SELECTED,
-        #"before": "switch_track",
+        "before": "switch_track",
     },
     {
         "trigger": "d_typed",
