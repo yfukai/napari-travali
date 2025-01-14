@@ -9,24 +9,27 @@ class ViewerState(Enum):
     DAUGHTER_DRAW = 6
     DAUGHTER_CHOOSE_MODE = 7
 
+Enter_key = "o"
+Escape_key = "n"
+
 TRANSITIONS = [
     {
-        #"trigger": "track_clicked",
-        "trigger": "Enter_typed",
+        "trigger": "track_clicked",
         "source": ViewerState.ALL_LABEL,
         "dest": ViewerState.LABEL_SELECTED,
-        #"before": "select_track",
+        "before": "select_track",
     },
     {
-        "trigger": "Escape_typed",
+        "trigger": f"{Escape_key}_typed",
         "source": ViewerState.LABEL_SELECTED,
         "dest": ViewerState.ALL_LABEL,
+        "before": "abort_transaction",
     },
     {
-        "trigger": "Enter_typed",
+        "trigger": f"{Enter_key}_typed",
         "source": ViewerState.LABEL_SELECTED,
         "dest": ViewerState.ALL_LABEL,
-        #"before": "finalize_track",
+        "before": "finalize_track",
     },
     {
         "trigger": "r_typed",
@@ -36,14 +39,14 @@ TRANSITIONS = [
         #"before": "refresh_redraw_label_layer",
     },
     {
-        "trigger": "Enter_typed",
+        "trigger": f"{Enter_key}_typed",
         "source": ViewerState.LABEL_REDRAW,
         "dest": ViewerState.LABEL_SELECTED,
         #"conditions": "check_drawn_label",
         #"before": "label_redraw_finish",
     },
     {
-        "trigger": "Escape_typed",
+        "trigger": f"{Escape_key}_typed",
         "source": ViewerState.LABEL_REDRAW,
         "dest": ViewerState.LABEL_SELECTED,
     },
@@ -54,7 +57,7 @@ TRANSITIONS = [
         #"conditions": "switch_track_enter_valid",
     },
     {
-        "trigger": "Escape_typed",
+        "trigger": f"{Escape_key}_typed",
         "source": ViewerState.LABEL_SWITCH,
         "dest": ViewerState.LABEL_SELECTED,
     },
@@ -77,19 +80,19 @@ TRANSITIONS = [
         #"before": "daughter_select",
     },
     {
-        "trigger": "Enter_typed",
+        "trigger": f"{Enter_key}_typed",
         "source": ViewerState.DAUGHTER_DRAW,
         "dest": ViewerState.DAUGHTER_CHOOSE_MODE,
         #"conditions": "check_drawn_label",
         #"before": "daughter_draw_finish",
     },
     {
-        "trigger": "Escape_typed",
+        "trigger": f"{Escape_key}_typed",
         "source": ViewerState.DAUGHTER_SWITCH,
         "dest": ViewerState.LABEL_SELECTED,
     },
     {
-        "trigger": "Escape_typed",
+        "trigger": f"{Escape_key}_typed",
         "source": ViewerState.DAUGHTER_DRAW,
         "dest": ViewerState.LABEL_SELECTED,
     },
@@ -101,3 +104,27 @@ TRANSITIONS = [
         #"before": "mark_termination",
     },
 ]
+
+STATE_EXPLANATION = {
+    ViewerState.ALL_LABEL: "All labels are shown.\nPlease click on a track to select it.",
+    ViewerState.LABEL_SELECTED: "A track is selected.\n"
+                      f"Press '{Enter_key}' to finalize the selection.\n"
+                      "Press 'r' to redraw the label mask of the frame.\n"
+                      "Press 's' to switch the tracks.\n"
+                      "Press 'd' to select the daughters.\n"
+                      "Press 't' to mark the termination of the track.\n"
+                     f"Press '{Escape_key}' to deselect the track.",
+    ViewerState.LABEL_REDRAW: "Redrawing the label mask.\n"
+                             f"Press '{Enter_key}' to finish.",
+    ViewerState.LABEL_SWITCH: "Switching the tracks.\n"
+                              "Click on the track to switch to.\n"
+                             f"Press '{Escape_key}' to cancel.",
+    ViewerState.DAUGHTER_CHOOSE_MODE: "Select or draw the daughter.\n",
+    ViewerState.DAUGHTER_SWITCH: "Switching the daughter.\n"
+                                "Click on the daughter to switch to.\n"
+                               f"Press '{Escape_key}' to cancel.",
+    ViewerState.DAUGHTER_DRAW: "Drawing the daughter.\n"
+                              f"Press '{Enter_key}' to finish.\n"
+                              f"Press '{Escape_key}' to cancel.",
+}
+    
