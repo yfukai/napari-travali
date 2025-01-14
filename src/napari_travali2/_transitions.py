@@ -36,7 +36,6 @@ TRANSITIONS = [
         "source": ViewerState.LABEL_SELECTED,
         "dest": ViewerState.LABEL_REDRAW,
         "conditions": "label_redraw_enter_valid",
-        "before": "refresh_redraw_label_layer",
     },
     {
         "trigger": f"{Enter_key}_typed",
