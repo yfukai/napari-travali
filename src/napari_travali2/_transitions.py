@@ -67,6 +67,13 @@ TRANSITIONS = [
         "before": "switch_track",
     },
     {
+        "trigger": "t_typed",
+        "source": ViewerState.LABEL_SELECTED,
+        "dest": ViewerState.LABEL_SELECTED,
+        "conditions": "mark_termination_enter_valid",
+        "before": "mark_termination",
+    },
+    {
         "trigger": "d_typed",
         "source": ViewerState.LABEL_SELECTED,
         "dest": ViewerState.DAUGHTER_CHOOSE_MODE,
@@ -94,13 +101,6 @@ TRANSITIONS = [
         "trigger": f"{Escape_key}_typed",
         "source": ViewerState.DAUGHTER_DRAW,
         "dest": ViewerState.LABEL_SELECTED,
-    },
-    {
-        "trigger": "t_typed",
-        "source": ViewerState.LABEL_SELECTED,
-        "dest": ViewerState.LABEL_SELECTED,
-        #"conditions": "mark_termination_enter_valid",
-        #"before": "mark_termination",
     },
 ]
 

@@ -5,8 +5,10 @@ from napari import Viewer
 from napari.layers import Labels as LabelsLayer
 from ._transitions import ViewerState, TRANSITIONS, STATE_EXPLANATION
 from ._logging import logger, log_error
+from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end
 import numpy as np
 import tensorstore as ts
+from copy import deepcopy
 import tensorstore_trackarr as tta
 
 SHOW_SELECTED_LABEL_STATES = [
@@ -107,9 +109,13 @@ class StateMachineWidget(Container):
             self._redraw_layer.mode = "paint"
             # TODO better if I can set the viewer.dims not to change
         
+    ################ Select tracks, finalize and abort edits ################
     @log_error    
     def select_track(self,frame,val):
         self._selected_label = val
+        self.original_bboxes_df = self.ta.bboxes_df.copy()
+        self.original_splits = deepcopy(self.ta.splits)
+        self.original_termination_annotations = deepcopy(self.ta.termination_annotations)
         logger.info(f"Track selected: frame {frame} value {val}")
         assert self.txn is None
         self.txn = ts.Transaction()
@@ -127,10 +133,16 @@ class StateMachineWidget(Container):
     @log_error    
     def abort_transaction(self):
         logger.info("Transaction aborted")
+        self._label_layer.data = self.ta.array
+        self.ta.bboxes_df = self.original_bboxes_df
+        self.ta.splits = self.original_splits
+        self.ta.termination_annotations = self.original_termination_annotations
+        
         self.txn.abort()
         self.txn = None
         self._label_layer.selected_label = 0
         
+    ################ Redraw labels ################
     @log_error
     def label_redraw_enter_valid(self):
         iT = self._viewer.dims.current_step[0]
@@ -155,4 +167,46 @@ class StateMachineWidget(Container):
         mask = self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1
         self.ta.update_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
         
+    ################ Switch tracks ################
+    @log_error
+    def switch_track_enter_valid(self):
+        iT = self._viewer.dims.current_step[0]
+        track_bboxes_df = self.ta._get_track_bboxes(self._selected_label).reset_index()
+        frames = track_bboxes_df["frame"].values
+        is_valid =  (iT >= frames.min()-1) and (iT <= frames.max()+1)
+        if not is_valid:
+            logger.info("track does not exist in connected timeframe")
+        return is_valid
     
+    @log_error
+    def switch_track(self, frame, val):
+        direction = choose_direction_by_mbox(self._viewer)
+        if not direction:
+            logger.info("Switch cancelled")
+            return
+        elif direction == "forward":
+            logger.info("Switching forward")
+        elif direction == "backward":
+            logger.info("Switching backward")
+
+    ################ Mark termination ################
+    @log_error
+    def mark_termination_enter_valid(self):
+        iT = self._viewer.dims.current_step[0]
+        track_bboxes_df = self.ta._get_track_bboxes(self._selected_label).reset_index()
+        frames = track_bboxes_df["frame"].values
+        is_valid =  (iT >= frames.min()) and (iT <= frames.max())
+        if not is_valid:
+            logger.info("track does not exist in the current timeframe")
+        return is_valid
+    
+    @log_error
+    def mark_termination(self):
+        iT = self._viewer.dims.current_step[0]
+        annotation, res = get_annotation_of_track_end(
+            self._viewer, self.ta.termination_annotations.get(self._selected_label, "")
+        )
+        if res:
+            self.ta.terminate_track(iT, self._selected_label, annotation, self.txn)
+        else:
+            logger.info("Mark termination cancelled")
