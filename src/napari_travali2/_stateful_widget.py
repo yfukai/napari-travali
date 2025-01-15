@@ -5,7 +5,7 @@ from napari import Viewer
 from napari.layers import Labels as LabelsLayer
 from ._transitions import ViewerState, TRANSITIONS, STATE_EXPLANATION
 from ._logging import logger, log_error
-from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,choose_division_by_mbox
+from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,choose_division_by_mbox, ask_draw_label
 import numpy as np
 import tensorstore as ts
 from copy import deepcopy
@@ -159,11 +159,16 @@ class StateMachineWidget(Container):
     def label_redraw_finish(self):
         logger.info("label redraw finish")
         iT = self._viewer.dims.current_step[0]
-        logger.info("label redraw finish")
         inds = np.nonzero(self._redraw_layer.data == 1)
         min_y, min_x, max_y, max_x = inds[0].min(), inds[1].min(), inds[0].max(), inds[1].max()
         mask = self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1
-        self.ta.update_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
+        if ask_draw_label(self._viewer) == "new":
+            safe_label = self.ta._get_safe_track_id()
+            logger.info("add mask")
+            self.ta._update_trackid(iT, self._selected_label, safe_label, self.txn)
+            self.ta.add_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
+        else:
+            self.ta.update_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
         
     ################ Switch tracks ################
     @log_error
