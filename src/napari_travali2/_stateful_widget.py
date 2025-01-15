@@ -105,7 +105,7 @@ class StateMachineWidget(Container):
             self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
             self._redraw_layer.selected_label = 1
             self._redraw_layer.mode = "paint"
-            # TODO better if I can set the viewer.dims not to change
+            # XXX better if I can set the viewer.dims not to change
         
     ################ Select tracks, finalize and abort edits ################
     @log_error    
