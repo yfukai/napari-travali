@@ -49,11 +49,13 @@ class StateMachineWidget(Container):
             name="Daughter1",
         )
         self._daughter_layer1.show_selected_label = True
+        self._daughter_layer1.contour = 2
         self._daughter_layer2 = viewer.add_labels(
             label_layer.data,
             name="Daughter2",
         )
         self._daughter_layer2.show_selected_label = True
+        self._daughter_layer2.contour = 2
         
         self.txn = None
         self.ta = ta
@@ -189,16 +191,22 @@ class StateMachineWidget(Container):
     def label_redraw_finish(self):
         logger.info("label redraw finish")
         iT = self._viewer.dims.current_step[0]
+        previous_frames = self.ta._get_track_bboxes(self._selected_label).index.get_level_values("frame").values
+        
         inds = np.nonzero(self._redraw_layer.data == 1)
         min_y, min_x, max_y, max_x = inds[0].min(), inds[1].min(), inds[0].max(), inds[1].max()
         mask = self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1
-        if ask_draw_label(self._viewer) == "new":
-            safe_label = self.ta._get_safe_track_id()
-            logger.info("add mask")
-            self.ta._update_trackid(iT, self._selected_label, safe_label, self.txn)
-            self.ta.add_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
+        
+        if iT in previous_frames:
+            if ask_draw_label(self._viewer) == "new":
+                safe_label = self.ta._get_safe_track_id()
+                logger.info("add mask")
+                self.ta._update_trackid(iT, self._selected_label, safe_label, self.txn)
+                self.ta.add_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
+            else:
+                self.ta.update_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
         else:
-            self.ta.update_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
+            self.ta.add_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
         
     ################ Switch tracks ################
     @log_error
