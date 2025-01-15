@@ -16,7 +16,6 @@ SHOW_SELECTED_LABEL_STATES = [
     ViewerState.LABEL_REDRAW,
     ViewerState.DAUGHTER_CHOOSE_MODE,
     ViewerState.DAUGHTER_DRAW,
-    ViewerState.DAUGHTER_SWITCH,
 ]
 
 VIEWER_STATE_VISIBILITY = { 
@@ -102,7 +101,7 @@ class StateMachineWidget(Container):
         active_layer = self._label_layer if visibility[0] else self._redraw_layer
         self._viewer.layers.selection.active = active_layer
             
-        if self.state == ViewerState.LABEL_REDRAW:
+        if visibility[1]:
             self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
             self._redraw_layer.selected_label = 1
             self._redraw_layer.mode = "paint"
@@ -245,16 +244,15 @@ class StateMachineWidget(Container):
     @log_error
     def on_enter_DAUGHTER_CHOOSE_MODE(self, *_):
         logger.info("Current daughter candidates count: %i", len(self._daughter_candidates))
-        if len(self.label_child_candidates) == 2:
+        if len(self._daughter_candidates) == 2:
             self.finalize_daughter()
             self.to_LABEL_SELECTED()
         else:
-            method = choose_division_by_mbox(self.viewer)
+            method = choose_division_by_mbox(self._viewer)
             logger.info("%s selected", method)
             if method == "select":
                 self.to_DAUGHTER_SWITCH()
             elif method == "draw":
-                self.refresh_redraw_label_layer()
                 self.to_DAUGHTER_DRAW()
             else:
                 self.to_LABEL_SELECTED()
@@ -268,19 +266,19 @@ class StateMachineWidget(Container):
 
     @log_error
     def daughter_draw_finish(self):
-        logger.info("label redraw finish")
         iT = self._viewer.dims.current_step[0]
         logger.info("label redraw finish")
         inds = np.nonzero(self._redraw_layer.data == 1)
         min_y, min_x, max_y, max_x = inds[0].min(), inds[1].min(), inds[0].max(), inds[1].max()
         mask = self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1
         safe_label = self.ta._get_safe_track_id()
-        self.ta.update_mask(iT, safe_label, (min_y, min_x), mask, self.txn)
+        logger.info("add mask")
+        self.ta.add_mask(iT, safe_label, (min_y, min_x), mask, self.txn)
         self._daughter_candidates.append(safe_label)
 
     @log_error
     def finalize_daughter(self):
-        assert len(self.label_child_candidates) == 2
+        assert len(self._daughter_candidates) == 2
         self.ta.add_split(self._daughter_frame,
                           self._selected_label, 
                           self._daughter_candidates, 

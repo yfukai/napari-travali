@@ -4057,7 +4057,7 @@ tensorstore = "^0.1.71"
 type = "git"
 url = "https://github.com/yfukai/tensorstore_trackarr"
 reference = "HEAD"
-resolved_reference = "3c60c7affbaeed1f55f6c84ad560a2d0dac9dce6"
+resolved_reference = "79c93c0ce04520496ff51d2849dca6cd449517ee"
 
 [[package]]
 name = "tifffile"
