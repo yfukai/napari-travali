@@ -40,6 +40,21 @@ class StateMachineWidget(Container):
         self._redraw_layer = viewer.add_labels(
             np.zeros(ta.array.shape[-2:],dtype=bool), 
             name="Redraw", cache=False)
+        if "Daughter1" in viewer.layers:
+            viewer.layers.remove(viewer.layers["Daughter1"])
+        if "Daughter2" in viewer.layers:
+            viewer.layers.remove(viewer.layers["Daughter2"])
+        self._daughter_layer1 = viewer.add_labels(
+            label_layer.data,
+            name="Daughter1",
+        )
+        self._daughter_layer1.show_selected_label = True
+        self._daughter_layer2 = viewer.add_labels(
+            label_layer.data,
+            name="Daughter2",
+        )
+        self._daughter_layer2.show_selected_label = True
+        
         self.txn = None
         self.ta = ta
 
@@ -92,8 +107,12 @@ class StateMachineWidget(Container):
                                   f"{STATE_EXPLANATION[self.state]}")
         if self.state in SHOW_SELECTED_LABEL_STATES:
             self._label_layer.show_selected_label = True
+            self._daughter_layer1.visible = True
+            self._daughter_layer2.visible = True
         else:
             self._label_layer.show_selected_label = False
+            self._daughter_layer1.visible = False
+            self._daughter_layer2.visible = False
             
         visibility = VIEWER_STATE_VISIBILITY[self.state]
         for layer, visible in zip([self._label_layer, self._redraw_layer], visibility):
@@ -106,7 +125,13 @@ class StateMachineWidget(Container):
             self._redraw_layer.selected_label = 1
             self._redraw_layer.mode = "paint"
             # XXX better if I can set the viewer.dims not to change
-        
+    
+    @log_error
+    def update_daughters(self):
+        daughters = self.ta.splits.get(self._selected_label, [])
+        for layer, d in zip([self._daughter_layer1, self._daughter_layer2], daughters+[0,0]):
+            layer.selected_label = d    
+    
     ################ Select tracks, finalize and abort edits ################
     @log_error    
     def select_track(self,frame,val):
@@ -118,7 +143,12 @@ class StateMachineWidget(Container):
         assert self.txn is None
         self.txn = ts.Transaction()
         self._label_layer.data = self.ta.array.with_transaction(self.txn)
+        self._daughter_layer1.data = self.ta.array.with_transaction(self.txn)
+        self._daughter_layer2.data = self.ta.array.with_transaction(self.txn)
+
         self._label_layer.selected_label = val
+
+        self.update_daughters()
         
     @log_error    
     def finalize_track(self):
@@ -288,3 +318,4 @@ class StateMachineWidget(Container):
                           self._selected_label, 
                           self._daughter_candidates, 
                           self.txn)
+        self.update_daughters()
