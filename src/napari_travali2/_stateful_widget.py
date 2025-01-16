@@ -29,12 +29,32 @@ VIEWER_STATE_VISIBILITY = {
 }
 
 class StateMachineWidget(Container):
-    def __init__(self, viewer: Viewer, label_layer: LabelsLayer, ta: tta.TrackArray, multiscale=False):
+    def __init__(self, 
+                 viewer: Viewer, 
+                 ta: tta.TrackArray, 
+                 image_data,
+                 crop_size=1024):
         super().__init__()
 
         self._viewer = viewer
-        self._label_layer = label_layer
-        self.multiscale = multiscale
+        self._image_layer = viewer.add_image([image_data, image_data[::2,::2]], name="Image")
+        self._label_layer = viewer.add_labels([ta.array, ta.array[::2,::2]], name="Labels")
+        self.crop_size = crop_size
+
+        shape = ta.array.shape[:-2]
+        cropped_shape = (*shape, crop_size, crop_size)
+        if "Cropped Image" in viewer.layers:
+            viewer.layers.remove(viewer.layers["Cropped Image"])
+        self._cropped_image_layer = viewer.add_image(
+            np.zeros(cropped_shape, dtype=image_data.dtype.name), 
+            name="Cropped Image")
+        
+        if "Cropped Labels" in viewer.layers:
+            viewer.layers.remove(viewer.layers["Cropped Labels"])
+        self._cropped_label_layer = viewer.add_labels(
+            np.zeros(cropped_shape, dtype=ta.array.dtype.name), 
+            name="Cropped Labels")
+        
         if "Redraw" in viewer.layers:
             viewer.layers.remove(viewer.layers["Redraw"])
         self._redraw_layer = viewer.add_labels(
@@ -45,13 +65,13 @@ class StateMachineWidget(Container):
         if "Daughter2" in viewer.layers:
             viewer.layers.remove(viewer.layers["Daughter2"])
         self._daughter_layer1 = viewer.add_labels(
-            label_layer.data,
+            np.zeros(cropped_shape, dtype=ta.array.dtype.name), 
             name="Daughter1",
         )
         self._daughter_layer1.show_selected_label = True
         self._daughter_layer1.contour = 2
         self._daughter_layer2 = viewer.add_labels(
-            label_layer.data,
+            np.zeros(cropped_shape, dtype=ta.array.dtype.name), 
             name="Daughter2",
         )
         self._daughter_layer2.show_selected_label = True
@@ -59,9 +79,10 @@ class StateMachineWidget(Container):
         
         self.txn = None
         self.ta = ta
+        self.image_data = image_data
 
         # Add a label to show the current state
-        self._state_label = Label(value=f"Current State: {ViewerState.ALL_LABEL}")
+        self._state_label = Label(value=f"Before initialization.")
         #self._state_label.setText(f"Current State: {ViewerState.ALL_LABEL}")
         self.extend([
             self._state_label
@@ -69,18 +90,20 @@ class StateMachineWidget(Container):
         
         self.machine = Machine(model=self, 
                                states=ViewerState, 
-                               initial=ViewerState.ALL_LABEL,
+                               initial=ViewerState.SELECT_REGION,
                                transitions=TRANSITIONS,
                                after_state_change="update_viewer_status",
                                ignore_invalid_triggers=True)
         
+
+        # XXX possibly refactor this
         self._viewer.bind_key("o", lambda event: self.o_typed(), overwrite=True)
         self._viewer.bind_key("r", lambda event: self.r_typed(), overwrite=True)
         self._viewer.bind_key("s", lambda event: self.s_typed(), overwrite=True)
         self._viewer.bind_key("d", lambda event: self.d_typed(), overwrite=True)
         self._viewer.bind_key("t", lambda event: self.t_typed(), overwrite=True)
         self._viewer.bind_key("n", lambda event: self.n_typed(), overwrite=True)
-        # getting the current layer from the layer_select
+        self._viewer.bind_key("c", lambda event: self.c_typed(), overwrite=True)
 
         self.update_viewer_status()
         
@@ -92,7 +115,7 @@ class StateMachineWidget(Container):
             data_coordinates = layer.world_to_data(event.position)
             logger.debug(f"world coordinates: {event.position}")
             logger.debug(f"data coordinates: {data_coordinates}")
-            cords = np.round(data_coordinates).astype(int)
+            coords = np.round(data_coordinates).astype(int)
             val = layer.get_value(data_coordinates)
             try:
                 _ = iter(val)
@@ -103,10 +126,19 @@ class StateMachineWidget(Container):
             if val is None:
                 return
             if val != 0:
-                frame = cords[0]
-                logger.info(f"clicked at {cords} at frame {frame} and label value {val}")
+                frame = coords[0]
+                logger.info(f"clicked at {coords} at frame {frame} and label value {val}")
                 self.track_clicked(frame, val)
-        self._label_layer.mouse_drag_callbacks.append(track_clicked)
+        self._cropped_label_layer.mouse_drag_callbacks.append(track_clicked)
+        
+        @log_error
+        def region_clicked(layer, event):
+            logger.info("Region clicked")
+            data_coordinates = layer.world_to_data(event.position)
+            cords = np.round(data_coordinates).astype(int)
+            logger.info(f"clicked at {cords}")
+            self.region_clicked(cords)
+        self._label_layer.mouse_drag_callbacks.append(region_clicked)
     
     @log_error    
     def update_viewer_status(self,*_args):
@@ -115,32 +147,67 @@ class StateMachineWidget(Container):
                                   "========================\n"
                                   "\n"
                                   f"{STATE_EXPLANATION[self.state]}")
-        if self.state in SHOW_SELECTED_LABEL_STATES:
-            self._label_layer.show_selected_label = True
-            self._daughter_layer1.visible = True
-            self._daughter_layer2.visible = True
-        else:
-            self._label_layer.show_selected_label = False
+        if self.state == ViewerState.SELECT_REGION:
+            self._label_layer.visible = True
+            self._image_layer.visible = True
+            self._cropped_image_layer.visible = False
+            self._cropped_label_layer.visible = False
+            self._redraw_layer.visible = False
             self._daughter_layer1.visible = False
             self._daughter_layer2.visible = False
-            
-        visibility = VIEWER_STATE_VISIBILITY[self.state]
-        for layer, visible in zip([self._label_layer, self._redraw_layer], visibility):
-            layer.visible = visible
-        active_layer = self._label_layer if visibility[0] else self._redraw_layer
-        self._viewer.layers.selection.active = active_layer
-            
-        if visibility[1]:
-            self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
-            self._redraw_layer.selected_label = 1
-            self._redraw_layer.mode = "paint"
-            # XXX better if I can set the viewer.dims not to change
+            self._viewer.layers.selection.active = self._label_layer
+        else:
+            self._label_layer.visible = False
+            self._image_layer.visible = False
+            self._cropped_image_layer.visible = True
+            if self.state in SHOW_SELECTED_LABEL_STATES:
+                self._cropped_label_layer.show_selected_label = True
+                self._daughter_layer1.visible = True
+                self._daughter_layer2.visible = True
+            else:
+                self._cropped_label_layer.show_selected_label = False
+                self._daughter_layer1.visible = False
+                self._daughter_layer2.visible = False
+
+            visibility = VIEWER_STATE_VISIBILITY[self.state]
+            for layer, visible in zip([self._cropped_label_layer, self._redraw_layer], visibility):
+                layer.visible = visible
+            active_layer = self._cropped_label_layer if visibility[0] else self._redraw_layer
+            self._viewer.layers.selection.active = active_layer
+
+            if visibility[1]:
+                self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
+                self._redraw_layer.selected_label = 1
+                self._redraw_layer.mode = "paint"
+                # XXX better if I can set the viewer.dims not to change
     
     @log_error
     def update_daughters(self):
         daughters = self.ta.splits.get(self._selected_label, [])
         for layer, d in zip([self._daughter_layer1, self._daughter_layer2], daughters+[0,0]):
             layer.selected_label = d    
+    
+    ################ Select region ################
+    @log_error
+    def crop_region(self,coords):
+        logger.info(f"Region selected: coords {coords}")
+        window = (slice(None),
+                  slice(coords[1]-self.crop_size//2,coords[1]+self.crop_size//2), 
+                  slice(coords[2]-self.crop_size//2,coords[2]+self.crop_size//2))
+        self.window = window
+        logger.info(f"window selected: {window}")
+        translate = [0]+[s.start for s in window[1:]]
+        self._cropped_image_layer.data = self.image_data[window][ts.d[:].translate_to[0]]
+        self._cropped_image_layer.translate = translate
+        cropped_label = self.ta.array[window][ts.d[:].translate_to[0]]
+        self._cropped_label = cropped_label
+        self._cropped_label_layer.data = cropped_label
+        self._cropped_label_layer.translate = translate
+        self._daughter_layer1.data = cropped_label
+        self._daughter_layer1.translate = translate
+        self._daughter_layer2.data = cropped_label
+        self._daughter_layer2.translate = translate
+
     
     ################ Select tracks, finalize and abort edits ################
     @log_error    
@@ -152,32 +219,11 @@ class StateMachineWidget(Container):
         logger.info(f"Track selected: frame {frame} value {val}")
         assert self.txn is None
         self.txn = ts.Transaction()
-        array_txn = self.ta.array.with_transaction(self.txn)
-        
-        if self.multiscale:
-            layer_data = [array_txn, array_txn[::2,::2]]
-            self._viewer.layers.remove(self._label_layer)
-            self._viewer.layers.remove(self._daughter_layer1)
-            self._viewer.layers.remove(self._daughter_layer2)
-            self._label_layer = self._viewer.add_labels(
-                layer_data, name="Labels", cache=False
-            )
-            self._daughter_layer1 = self._viewer.add_labels(
-                layer_data, name="Daughter1",
-            )
-            self._daughter_layer1.show_selected_label = True
-            self._daughter_layer1.contour = 2
-            self._daughter_layer2 = self._viewer.add_labels(
-                layer_data, name="Daughter2",
-            )
-            self._daughter_layer2.show_selected_label = True
-            self._daughter_layer2.contour = 2
-        else:
-            self._label_layer.data = array_txn
-            self._daughter_layer1.data = array_txn
-            self._daughter_layer2.data = array_txn
-
-        self._label_layer.selected_label = val
+        array_txn = self._cropped_label.with_transaction(self.txn)
+        self._cropped_label_layer.data = array_txn
+        self._daughter_layer1.data = array_txn
+        self._daughter_layer2.data = array_txn
+        self._cropped_label_layer.selected_label = val
 
         self.update_daughters()
         
@@ -185,36 +231,22 @@ class StateMachineWidget(Container):
     def finalize_track(self):
         logger.info("Track finalized")
         self.txn.commit_sync()
-        if self.multiscale:
-            layer_data = [self.ta.array, self.ta.array[::2,::2]]
-            self._viewer.layers.remove(self._label_layer)
-            self._label_layer = self._viewer.add_labels(
-                layer_data, name="Labels", cache=False
-            )
-        else:
-            self._label_layer.data = self.ta.array
+        self._cropped_label_layer.data = self._cropped_label
     
         self.txn = None
-        self._label_layer.selected_label = 0
+        self._cropped_label_layer.selected_label = 0
     
     @log_error    
     def abort_transaction(self):
         logger.info("Transaction aborted")
-        if self.multiscale:
-            layer_data = [self.ta.array, self.ta.array[::2,::2]]
-            self._viewer.layers.remove(self._label_layer)
-            self._label_layer = self._viewer.add_labels(
-                layer_data, name="Labels", cache=False
-            )
-        else:
-            self._label_layer.data = self.ta.array
+        self._cropped_label_layer.data = self._cropped_label
         self.ta.bboxes_df = self.original_bboxes_df
         self.ta.splits = self.original_splits
         self.ta.termination_annotations = self.original_termination_annotations
         
         self.txn.abort()
         self.txn = None
-        self._label_layer.selected_label = 0
+        self._cropped_label_layer.selected_label = 0
         
     ################ Redraw labels ################
     @log_error

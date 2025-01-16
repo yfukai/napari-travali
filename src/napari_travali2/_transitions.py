@@ -15,6 +15,17 @@ Escape_key = "n"
 
 TRANSITIONS = [
     {
+        "trigger": "region_clicked",
+        "source": ViewerState.SELECT_REGION,
+        "dest": ViewerState.ALL_LABEL,
+        "before": "crop_region",
+    },
+    {
+        "trigger": "c_typed",
+        "source": ViewerState.ALL_LABEL,
+        "dest": ViewerState.SELECT_REGION,
+    },
+    {
         "trigger": "track_clicked",
         "source": ViewerState.ALL_LABEL,
         "dest": ViewerState.LABEL_SELECTED,
