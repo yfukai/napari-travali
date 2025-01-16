@@ -8,6 +8,7 @@ class ViewerState(Enum):
     DAUGHTER_SWITCH = 5
     DAUGHTER_DRAW = 6
     DAUGHTER_CHOOSE_MODE = 7
+    SELECT_REGION = 8
 
 Enter_key = "o"
 Escape_key = "n"
@@ -106,7 +107,9 @@ TRANSITIONS = [
 ]
 
 STATE_EXPLANATION = {
-    ViewerState.ALL_LABEL: "All labels are shown.\nPlease click on a track to select it.",
+    ViewerState.ALL_LABEL: "All labels are shown.\n"
+                           "Please click on a track to select it.\n"
+                           "Press 'a' to show the whole image.\n",
     ViewerState.LABEL_SELECTED: "A track is selected.\n"
                       f"Press '{Enter_key}' to finalize the selection.\n"
                       "Press 'r' to redraw the label mask of the frame.\n"
@@ -126,5 +129,6 @@ STATE_EXPLANATION = {
     ViewerState.DAUGHTER_DRAW: "Drawing the daughter.\n"
                               f"Press '{Enter_key}' to finish.\n"
                               f"Press '{Escape_key}' to cancel.",
+    ViewerState.SELECT_REGION: "All regions are shown.\nPlease click on a region to crop it.",
 }
     

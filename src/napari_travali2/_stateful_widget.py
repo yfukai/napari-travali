@@ -1,6 +1,5 @@
 from transitions import Machine
-from qtpy.QtWidgets import QVBoxLayout, QWidget, QLabel
-from magicgui.widgets import Container, create_widget, Label
+from magicgui.widgets import Container, Label
 from napari import Viewer
 from napari.layers import Labels as LabelsLayer
 from ._transitions import ViewerState, TRANSITIONS, STATE_EXPLANATION
@@ -30,11 +29,12 @@ VIEWER_STATE_VISIBILITY = {
 }
 
 class StateMachineWidget(Container):
-    def __init__(self, viewer: Viewer, label_layer: LabelsLayer, ta: tta.TrackArray):
+    def __init__(self, viewer: Viewer, label_layer: LabelsLayer, ta: tta.TrackArray, multiscale=False):
         super().__init__()
 
         self._viewer = viewer
         self._label_layer = label_layer
+        self.multiscale = multiscale
         if "Redraw" in viewer.layers:
             viewer.layers.remove(viewer.layers["Redraw"])
         self._redraw_layer = viewer.add_labels(
@@ -90,8 +90,16 @@ class StateMachineWidget(Container):
             yield  # important to avoid a potential bug when selecting the daughter
             logger.info("button released")
             data_coordinates = layer.world_to_data(event.position)
+            logger.debug(f"world coordinates: {event.position}")
+            logger.debug(f"data coordinates: {data_coordinates}")
             cords = np.round(data_coordinates).astype(int)
             val = layer.get_value(data_coordinates)
+            try:
+                _ = iter(val)
+                val = val[-1]
+            except TypeError as te:
+                pass
+                
             if val is None:
                 return
             if val != 0:
@@ -144,9 +152,30 @@ class StateMachineWidget(Container):
         logger.info(f"Track selected: frame {frame} value {val}")
         assert self.txn is None
         self.txn = ts.Transaction()
-        self._label_layer.data = self.ta.array.with_transaction(self.txn)
-        self._daughter_layer1.data = self.ta.array.with_transaction(self.txn)
-        self._daughter_layer2.data = self.ta.array.with_transaction(self.txn)
+        array_txn = self.ta.array.with_transaction(self.txn)
+        
+        if self.multiscale:
+            layer_data = [array_txn, array_txn[::2,::2]]
+            self._viewer.layers.remove(self._label_layer)
+            self._viewer.layers.remove(self._daughter_layer1)
+            self._viewer.layers.remove(self._daughter_layer2)
+            self._label_layer = self._viewer.add_labels(
+                layer_data, name="Labels", cache=False
+            )
+            self._daughter_layer1 = self._viewer.add_labels(
+                layer_data, name="Daughter1",
+            )
+            self._daughter_layer1.show_selected_label = True
+            self._daughter_layer1.contour = 2
+            self._daughter_layer2 = self._viewer.add_labels(
+                layer_data, name="Daughter2",
+            )
+            self._daughter_layer2.show_selected_label = True
+            self._daughter_layer2.contour = 2
+        else:
+            self._label_layer.data = array_txn
+            self._daughter_layer1.data = array_txn
+            self._daughter_layer2.data = array_txn
 
         self._label_layer.selected_label = val
 
@@ -156,14 +185,29 @@ class StateMachineWidget(Container):
     def finalize_track(self):
         logger.info("Track finalized")
         self.txn.commit_sync()
-        self._label_layer.data = self.ta.array
+        if self.multiscale:
+            layer_data = [self.ta.array, self.ta.array[::2,::2]]
+            self._viewer.layers.remove(self._label_layer)
+            self._label_layer = self._viewer.add_labels(
+                layer_data, name="Labels", cache=False
+            )
+        else:
+            self._label_layer.data = self.ta.array
+    
         self.txn = None
         self._label_layer.selected_label = 0
     
     @log_error    
     def abort_transaction(self):
         logger.info("Transaction aborted")
-        self._label_layer.data = self.ta.array
+        if self.multiscale:
+            layer_data = [self.ta.array, self.ta.array[::2,::2]]
+            self._viewer.layers.remove(self._label_layer)
+            self._label_layer = self._viewer.add_labels(
+                layer_data, name="Labels", cache=False
+            )
+        else:
+            self._label_layer.data = self.ta.array
         self.ta.bboxes_df = self.original_bboxes_df
         self.ta.splits = self.original_splits
         self.ta.termination_annotations = self.original_termination_annotations
