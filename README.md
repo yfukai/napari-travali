@@ -31,11 +31,29 @@
 
 ## Installation
 
-You can install _Napari Travali2_ via [pip] from [PyPI]:
+You can install _Napari Travali2_ from GitHub.
 
+Please install it as 
+
+```console
+$ brew install pipx
+$ pipx install poetry
+$ git clone https://github.com/yfukai/napari-travali2
+$ cd napari-travali2 
+$ poetry config virtualenvs.in-project true # to create local .venv 
+$ poetry install 
+```
+for development, or simply
+```console
+$ pip install git+https://github.com/yfukai/napari-travali2
+```
+
+<!--
+You can install _Napari Travali2_ via [pip] from [PyPI]:
 ```console
 $ pip install napari-travali2
 ```
+-->
 
 ## Usage
 
