@@ -39,7 +39,8 @@ $ pip install napari-travali2
 
 ## Usage
 
-Please see the [Command-line Reference] for details.
+- TODO 
+<!--Please see the [Command-line Reference] for details. -->
 
 ## Contributing
 

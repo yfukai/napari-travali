@@ -120,7 +120,7 @@ TRANSITIONS = [
 STATE_EXPLANATION = {
     ViewerState.ALL_LABEL: "All labels are shown.\n"
                            "Please click on a track to select it.\n"
-                           "Press 'a' to show the whole image.\n",
+                           "Press 'c' to show the whole image.\n",
     ViewerState.LABEL_SELECTED: "A track is selected.\n"
                       f"Press '{Enter_key}' to finalize the selection.\n"
                       "Press 'r' to redraw the label mask of the frame.\n"
