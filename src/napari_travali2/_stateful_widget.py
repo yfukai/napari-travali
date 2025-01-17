@@ -8,7 +8,7 @@ from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,ch
 import numpy as np
 import tensorstore as ts
 from copy import deepcopy
-import tensorstore_trackarr as tta
+import trackarray_tensorstore as tats
 
 SHOW_SELECTED_LABEL_STATES = [
     ViewerState.LABEL_SELECTED,
@@ -31,7 +31,7 @@ VIEWER_STATE_VISIBILITY = {
 class StateMachineWidget(Container):
     def __init__(self, 
                  viewer: Viewer, 
-                 ta: tta.TrackArray, 
+                 ta: tats.TrackArray, 
                  image_data,
                  crop_size=1024):
         super().__init__()
@@ -213,7 +213,7 @@ class StateMachineWidget(Container):
     @log_error    
     def select_track(self,frame,val):
         self._selected_label = val
-        self.original_bboxes_df = self.ta.bboxes_df.copy()
+        self.original_bboxes_dict = deepcopy(self.ta._bboxes_dict)
         self.original_splits = deepcopy(self.ta.splits)
         self.original_termination_annotations = deepcopy(self.ta.termination_annotations)
         logger.info(f"Track selected: frame {frame} value {val}")
