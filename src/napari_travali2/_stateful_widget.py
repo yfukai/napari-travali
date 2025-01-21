@@ -8,6 +8,8 @@ from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,ch
 from ._consts import SELECTED_COLOR, DAUGHTER_COLORS
 import numpy as np
 import tensorstore as ts
+from dask import array as da
+import pandas as pd
 from copy import deepcopy
 import trackarray_tensorstore as tats
 from napari.utils.colormaps import label_colormap
@@ -40,6 +42,8 @@ class StateMachineWidget(Container):
                  viewer: Viewer, 
                  ta: tats.TrackArray, 
                  image_data,
+                 verified_track_ids=set(),
+                 candidate_track_ids=set(),
                  crop_size=1024):
         super().__init__()
 
@@ -47,6 +51,8 @@ class StateMachineWidget(Container):
         self._image_layer = viewer.add_image([image_data, image_data[::2,::2]], name="Image")
         self._label_layer = viewer.add_labels([ta.array, ta.array[::2,::2]], name="Labels")
         self.crop_size = crop_size
+        self.verified_track_ids = verified_track_ids
+        self.candidate_track_ids = candidate_track_ids
 
         shape = ta.array.shape[:-2]
         cropped_shape = (*shape, crop_size, crop_size)
@@ -59,7 +65,7 @@ class StateMachineWidget(Container):
         if "Cropped Labels" in viewer.layers:
             viewer.layers.remove(viewer.layers["Cropped Labels"])
         self._cropped_label_layer = viewer.add_labels(
-            np.zeros(cropped_shape, dtype=ta.array.dtype.name), 
+            da.zeros(cropped_shape, dtype=ta.array.dtype.name), 
             name="Cropped Labels")
         
         if "Redraw" in viewer.layers:
@@ -67,7 +73,7 @@ class StateMachineWidget(Container):
         self._redraw_layer = viewer.add_labels(
             np.zeros(ta.array.shape[-2:],dtype=bool), 
             name="Redraw", cache=False)
-       
+        
         self.txn = None
         self.ta = ta
         self.image_data = image_data
@@ -130,6 +136,8 @@ class StateMachineWidget(Container):
             logger.info(f"clicked at {cords}")
             self.region_clicked(cords)
         self._label_layer.mouse_drag_callbacks.append(region_clicked)
+        
+        self.update_finalized_point_layer()
     
     @log_error    
     def update_viewer_status(self,*_args):
@@ -165,6 +173,39 @@ class StateMachineWidget(Container):
                 self._redraw_layer.selected_label = 1
                 self._redraw_layer.mode = "paint"
                 # XXX better if I can set the viewer.dims not to change
+    
+    def update_finalized_point_layer(self):
+        empty_df = pd.DataFrame(columns=["frame","min_y","min_x","max_y","max_x","track_id"])
+        verified_positions = [
+            self.ta._get_track_bboxes(track_id) for track_id in self.verified_track_ids
+        ]
+        candidate_positions = [
+            self.ta._get_track_bboxes(track_id) for track_id in self.candidate_track_ids
+        ]
+
+        points_df = pd.concat(verified_positions).reset_index()\
+            if verified_positions else empty_df
+        points_df2 = pd.concat(candidate_positions).reset_index()\
+            if candidate_positions else empty_df
+        points_df = pd.concat([
+            points_df.assign(finalized=True), 
+            points_df2.assign(finalized=False)
+        ])
+            
+        points_df["y"] = (points_df["min_y"] + points_df["max_y"]) / 2
+        points_df["x"] = (points_df["min_x"] + points_df["max_x"]) / 2
+        
+        if "Finalized" in self._viewer.layers:
+            self._viewer.layers.remove(self._viewer.layers["Finalized"])
+        
+        self._viewer.add_points(
+            points_df[["frame","y","x"]],
+            properties={"finalized":points_df["finalized"].values},
+            border_color='finalized',
+            border_color_cycle=['magenta', 'green'],
+            name="Finalized",size=75, 
+            face_color="transparent", 
+            border_width=0.15)
     
     @log_error
     def set_selected_colormap(self):
@@ -213,11 +254,14 @@ class StateMachineWidget(Container):
     @log_error    
     def finalize_track(self):
         logger.info("Track finalized")
+        self.verified_track_ids.add(self._selected_label)
+        self.candidate_track_ids.discard(self._selected_label)
+        self.candidate_track_ids.update(set(self._daughters)-set(self.verified_track_ids))
         self.txn.commit_sync()
         self._cropped_label_layer.data = self._cropped_label
     
         self.txn = None
-        self._cropped_label_layer.selected_label = 0
+        self.update_finalized_point_layer()
     
     @log_error    
     def abort_transaction(self):
@@ -229,7 +273,6 @@ class StateMachineWidget(Container):
         
         self.txn.abort()
         self.txn = None
-        self._cropped_label_layer.selected_label = 0
         
     ################ Redraw labels ################
     @log_error
@@ -260,7 +303,7 @@ class StateMachineWidget(Container):
             if ask_draw_label(self._viewer) == "new":
                 safe_label = self.ta._get_safe_track_id()
                 logger.info("add mask")
-                self.ta._update_trackid(iT, self._selected_label, safe_label, self.txn)
+                self.ta._update_trackids(iT, self._selected_label, safe_label, self.txn)
                 self.ta.add_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
             else:
                 self.ta.update_mask(iT, self._selected_label, (min_y, min_x), mask, self.txn)
@@ -303,6 +346,7 @@ class StateMachineWidget(Container):
             self.ta.break_track(frame+1, switch_target_label, False, self.txn, 
                                 new_trackid=self._selected_label)
         self.ta.cleanup_single_daughter_splits()
+        
         
 
     ################ Mark termination ################
