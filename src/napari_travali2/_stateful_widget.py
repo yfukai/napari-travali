@@ -5,10 +5,17 @@ from napari.layers import Labels as LabelsLayer
 from ._transitions import ViewerState, TRANSITIONS, STATE_EXPLANATION
 from ._logging import logger, log_error
 from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,choose_division_by_mbox, ask_draw_label
+from ._consts import SELECTED_COLOR, DAUGHTER_COLORS
 import numpy as np
 import tensorstore as ts
 from copy import deepcopy
 import trackarray_tensorstore as tats
+from napari.utils.colormaps import label_colormap
+
+def default_colormap():
+    return label_colormap(
+            49, 0, background_value=0
+    )
 
 SHOW_SELECTED_LABEL_STATES = [
     ViewerState.LABEL_SELECTED,
@@ -60,23 +67,7 @@ class StateMachineWidget(Container):
         self._redraw_layer = viewer.add_labels(
             np.zeros(ta.array.shape[-2:],dtype=bool), 
             name="Redraw", cache=False)
-        if "Daughter1" in viewer.layers:
-            viewer.layers.remove(viewer.layers["Daughter1"])
-        if "Daughter2" in viewer.layers:
-            viewer.layers.remove(viewer.layers["Daughter2"])
-        self._daughter_layer1 = viewer.add_labels(
-            np.zeros(cropped_shape, dtype=ta.array.dtype.name), 
-            name="Daughter1",
-        )
-        self._daughter_layer1.show_selected_label = True
-        self._daughter_layer1.contour = 2
-        self._daughter_layer2 = viewer.add_labels(
-            np.zeros(cropped_shape, dtype=ta.array.dtype.name), 
-            name="Daughter2",
-        )
-        self._daughter_layer2.show_selected_label = True
-        self._daughter_layer2.contour = 2
-        
+       
         self.txn = None
         self.ta = ta
         self.image_data = image_data
@@ -153,27 +144,21 @@ class StateMachineWidget(Container):
             self._cropped_image_layer.visible = False
             self._cropped_label_layer.visible = False
             self._redraw_layer.visible = False
-            self._daughter_layer1.visible = False
-            self._daughter_layer2.visible = False
             self._viewer.layers.selection.active = self._label_layer
         else:
             self._label_layer.visible = False
             self._image_layer.visible = False
             self._cropped_image_layer.visible = True
-            if self.state in SHOW_SELECTED_LABEL_STATES:
-                self._cropped_label_layer.show_selected_label = True
-                self._daughter_layer1.visible = True
-                self._daughter_layer2.visible = True
-            else:
-                self._cropped_label_layer.show_selected_label = False
-                self._daughter_layer1.visible = False
-                self._daughter_layer2.visible = False
-
             visibility = VIEWER_STATE_VISIBILITY[self.state]
             for layer, visible in zip([self._cropped_label_layer, self._redraw_layer], visibility):
                 layer.visible = visible
             active_layer = self._cropped_label_layer if visibility[0] else self._redraw_layer
             self._viewer.layers.selection.active = active_layer
+
+            if self.state not in SHOW_SELECTED_LABEL_STATES:
+                self._cropped_label_layer.colormap = default_colormap()
+            else:
+                self.set_selected_colormap()
 
             if visibility[1]:
                 self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
@@ -182,10 +167,15 @@ class StateMachineWidget(Container):
                 # XXX better if I can set the viewer.dims not to change
     
     @log_error
+    def set_selected_colormap(self):
+        self._cropped_label_layer.colormap = {0:(0,0,0,0), 
+                                              self._selected_label:SELECTED_COLOR,
+                                              **{d:c for d,c in zip(self._daughters,DAUGHTER_COLORS)},
+                                              None:(0,0,0,0)}
+    
+    @log_error
     def update_daughters(self):
-        daughters = self.ta.splits.get(self._selected_label, [])
-        for layer, d in zip([self._daughter_layer1, self._daughter_layer2], daughters+[0,0]):
-            layer.selected_label = d    
+        self._daughters = self.ta.splits.get(self._selected_label, [])
     
     ################ Select region ################
     @log_error
@@ -203,10 +193,6 @@ class StateMachineWidget(Container):
         self._cropped_label = cropped_label
         self._cropped_label_layer.data = cropped_label
         self._cropped_label_layer.translate = translate
-        self._daughter_layer1.data = cropped_label
-        self._daughter_layer1.translate = translate
-        self._daughter_layer2.data = cropped_label
-        self._daughter_layer2.translate = translate
 
     
     ################ Select tracks, finalize and abort edits ################
@@ -221,12 +207,9 @@ class StateMachineWidget(Container):
         self.txn = ts.Transaction()
         array_txn = self._cropped_label.with_transaction(self.txn)
         self._cropped_label_layer.data = array_txn
-        self._daughter_layer1.data = array_txn
-        self._daughter_layer2.data = array_txn
         self._cropped_label_layer.selected_label = val
-
         self.update_daughters()
-        
+
     @log_error    
     def finalize_track(self):
         logger.info("Track finalized")
@@ -240,7 +223,7 @@ class StateMachineWidget(Container):
     def abort_transaction(self):
         logger.info("Transaction aborted")
         self._cropped_label_layer.data = self._cropped_label
-        self.ta.bboxes_df = self.original_bboxes_df
+        self.ta._bboxes_dict = self.original_bboxes_dict
         self.ta.splits = self.original_splits
         self.ta.termination_annotations = self.original_termination_annotations
         
