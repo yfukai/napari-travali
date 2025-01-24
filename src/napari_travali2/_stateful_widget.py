@@ -51,15 +51,15 @@ class StateMachineWidget(Container):
         self._image_layer = viewer.add_image([image_data, image_data[::2,::2]], name="Image")
         self._label_layer = viewer.add_labels([ta.array, ta.array[::2,::2]], name="Labels")
         self.crop_size = crop_size
-        self.verified_track_ids = verified_track_ids
-        self.candidate_track_ids = candidate_track_ids
+        self.verified_track_ids = set(map(int,verified_track_ids))
+        self.candidate_track_ids = set(map(int,candidate_track_ids))
 
         shape = ta.array.shape[:-2]
         cropped_shape = (*shape, crop_size, crop_size)
         if "Cropped Image" in viewer.layers:
             viewer.layers.remove(viewer.layers["Cropped Image"])
         self._cropped_image_layer = viewer.add_image(
-            np.zeros(cropped_shape, dtype=image_data.dtype.name), 
+            da.zeros(cropped_shape, dtype=image_data.dtype.name), 
             name="Cropped Image")
         
         if "Cropped Labels" in viewer.layers:
@@ -101,8 +101,6 @@ class StateMachineWidget(Container):
         self._viewer.bind_key("t", lambda event: self.t_typed(), overwrite=True)
         self._viewer.bind_key("n", lambda event: self.n_typed(), overwrite=True)
         self._viewer.bind_key("c", lambda event: self.c_typed(), overwrite=True)
-
-        self.update_viewer_status()
         
         @log_error
         def track_clicked(layer, event):
@@ -138,7 +136,8 @@ class StateMachineWidget(Container):
         self._label_layer.mouse_drag_callbacks.append(region_clicked)
         
         self.update_finalized_point_layer()
-    
+        self.update_viewer_status()  
+        
     @log_error    
     def update_viewer_status(self,*_args):
         self._state_label.value = ("========================\n"
@@ -207,6 +206,9 @@ class StateMachineWidget(Container):
             face_color="transparent", 
             border_width=0.15)
     
+        # XXX Should be automatically updated by the state machine?
+        self.update_viewer_status()
+    
     @log_error
     def set_selected_colormap(self):
         self._cropped_label_layer.colormap = {0:(0,0,0,0), 
@@ -254,10 +256,16 @@ class StateMachineWidget(Container):
     @log_error    
     def finalize_track(self):
         logger.info("Track finalized")
-        self.verified_track_ids.add(self._selected_label)
-        self.candidate_track_ids.discard(self._selected_label)
-        self.candidate_track_ids.update(set(self._daughters)-set(self.verified_track_ids))
+        self.verified_track_ids.add(int(self._selected_label))
+        self.candidate_track_ids.discard(int(self._selected_label))
+        self.candidate_track_ids.update(map(int,set(self._daughters)-set(self.verified_track_ids)))
+
+        # XXX : Maybe in another thread? Make it sure that this happens surely independent of the main thread exit, and in the correct order.
+        self.ta.attrs["verified_track_ids"] = list(self.verified_track_ids)
+        self.ta.attrs["candidate_track_ids"] = list(self.candidate_track_ids)
+        self.ta.write_properties()   
         self.txn.commit_sync()
+        
         self._cropped_label_layer.data = self._cropped_label
     
         self.txn = None
