@@ -104,6 +104,7 @@ class StateMachineWidget(Container):
         
         @log_error
         def track_clicked(layer, event):
+            logger.info(event.modifiers)
             logger.info("Track clicked")
             yield  # important to avoid a potential bug when selecting the daughter
             logger.info("button released")
@@ -121,9 +122,16 @@ class StateMachineWidget(Container):
             if val is None:
                 return
             if val != 0:
-                frame = coords[0]
-                logger.info(f"clicked at {coords} at frame {frame} and label value {val}")
-                self.track_clicked(frame, val)
+                if "Control" in event.modifiers:
+                    logger.info("Control pressed, removing from the verified or candidate list")
+                    self.verified_track_ids.discard(int(val))
+                    self.candidate_track_ids.discard(int(val))
+                    self.update_finalized_point_layer()
+                    self._write_verified_and_candidates()
+                else:
+                    frame = coords[0]
+                    logger.info(f"clicked at {coords} at frame {frame} and label value {val}")
+                    self.track_clicked(frame, val)
         self._cropped_label_layer.mouse_drag_callbacks.append(track_clicked)
         
         @log_error
@@ -253,10 +261,20 @@ class StateMachineWidget(Container):
         self._cropped_label_layer.selected_label = val
         self.update_daughters()
 
+    @log_error
+    def _write_verified_and_candidates(self):
+        logger.info("Writing properties")
+        self.ta.attrs["verified_track_ids"] = list(self.verified_track_ids)
+        self.ta.attrs["candidate_track_ids"] = list(self.candidate_track_ids)
+        self.ta.write_properties()
+        logger.info("Properties written")
+
     @log_error    
     def finalize_track(self):
         logger.info("Track finalized")
         self.verified_track_ids.add(int(self._selected_label))
+        for track_id in self.self.original_splits.get(self._selected_label, []):
+            self.candidate_track_ids.discard(int(track_id))
         self.candidate_track_ids.discard(int(self._selected_label))
         self.candidate_track_ids.update(map(int,set(self._daughters)-set(self.verified_track_ids)))
 
