@@ -176,7 +176,6 @@ class StateMachineWidget(Container):
                 self.set_selected_colormap()
 
             if visibility[1]:
-                self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
                 self._redraw_layer.selected_label = 1
                 self._redraw_layer.mode = "paint"
                 # XXX better if I can set the viewer.dims not to change
@@ -273,7 +272,8 @@ class StateMachineWidget(Container):
     def finalize_track(self):
         logger.info("Track finalized")
         self.verified_track_ids.add(int(self._selected_label))
-        for track_id in self.self.original_splits.get(self._selected_label, []):
+        for track_id in self.original_splits.get(int(self._selected_label), []):
+            logger.info(f"Previous daughter {track_id} removed from the candidate list")
             self.candidate_track_ids.discard(int(track_id))
         self.candidate_track_ids.discard(int(self._selected_label))
         self.candidate_track_ids.update(map(int,set(self._daughters)-set(self.verified_track_ids)))
@@ -310,6 +310,14 @@ class StateMachineWidget(Container):
         if not is_valid:
             logger.info("track does not exist in connected timeframe")
         return is_valid
+
+    @log_error
+    def prepare_redraw_layer(self):
+        logger.info("Prepare redraw layer")
+        self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
+        iT = self._viewer.dims.current_step[0]
+        cropped_label_frame = self._cropped_label[iT].read().result()
+        self._redraw_layer.data[self.window[1:]] = (cropped_label_frame == self._selected_label)
 
     @log_error
     def check_drawn_label(self):
@@ -372,8 +380,7 @@ class StateMachineWidget(Container):
             self.ta.break_track(frame+1, switch_target_label, False, self.txn, 
                                 new_trackid=self._selected_label)
         self.ta.cleanup_single_daughter_splits()
-        
-        
+        self.update_daughters()
 
     ################ Mark termination ################
     @log_error
@@ -394,6 +401,7 @@ class StateMachineWidget(Container):
         )
         if res:
             self.ta.terminate_track(iT, self._selected_label, annotation, self.txn)
+            self.update_daughters()
         else:
             logger.info("Mark termination cancelled")
 

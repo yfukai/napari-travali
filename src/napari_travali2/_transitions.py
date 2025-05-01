@@ -47,6 +47,7 @@ TRANSITIONS = [
         "trigger": "r_typed",
         "source": ViewerState.LABEL_SELECTED,
         "dest": ViewerState.LABEL_REDRAW,
+        "after":"prepare_redraw_layer",
         "conditions": "label_redraw_enter_valid",
     },
     {
