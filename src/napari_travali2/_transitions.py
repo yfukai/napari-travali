@@ -121,7 +121,7 @@ TRANSITIONS = [
 STATE_EXPLANATION = {
     ViewerState.ALL_LABEL: "All labels are shown.\n"
                            "Please click on a track to select it.\n"
-                           "Please Ctrl (or Cmd in mac)-click on a track to "
+                           "Please Ctrl (or Cmd in mac)-click on a track to\n"
                            "remove it from the verified or candidate list.\n"
                            "Press 'c' to show the whole image.\n",
     ViewerState.LABEL_SELECTED: "A track is selected.\n"
