@@ -11,7 +11,6 @@ from . import utils
 if TYPE_CHECKING:
     from .actionable_tracks import ActionableTracks
 
-@dataclass
 class Action(abc.ABC):
     """Abstract base class for actions on actionable tracks."""
     
@@ -42,6 +41,7 @@ def update_tracklet_ids(tracks: "ActionableTracks", node_ids: list[int]):
     )
     tracks.update_safe_tracklet_id(max(tree.nodes()))
 
+@dataclass
 class RedrawMaskAction(Action):
     """Replace the segmentation mask of a single node."""
 
@@ -62,6 +62,7 @@ class RedrawMaskAction(Action):
             node_ids=[self.node_id],
         )
 
+@dataclass
 class ConnectTrackAction(Action):
     """Connect two track nodes by inserting an edge and reassigning tracklet IDs."""
 
@@ -86,10 +87,11 @@ class ConnectTrackAction(Action):
         )
         tracks.graph.add_edge(self.node_id1, self.node_id2, {})
         if self.reconnect_others:
+            if len(predecessor_node_ids) > 1:
+                raise ValueError("Cannot reconnect predecessors when multiple exist.")
             for succ_id in successor_node_ids:
-                tracks.graph.add_edge(self.node_id2, succ_id, {})
-            for pred_id in predecessor_node_ids:
-                tracks.graph.add_edge(pred_id, self.node_id1, {})
+                for pred_id in predecessor_node_ids:
+                    tracks.graph.add_edge(pred_id, succ_id, {})
         
         update_tracklet_ids(
             tracks,
@@ -102,6 +104,7 @@ class ConnectTrackAction(Action):
         )
         # TODO set undo action
        
+@dataclass
 class AnnotateDaughterAction(Action):
     """Create or connect daughter nodes from a parent division event."""
 
@@ -135,6 +138,7 @@ class AnnotateDaughterAction(Action):
         )
 
 
+@dataclass
 class MergeLabelsAction(Action):
     """Merge the segmentation labels of two nodes into the target node."""
 
@@ -161,6 +165,7 @@ class MergeLabelsAction(Action):
             node_ids=[self.node_id_target],
         )
 
+@dataclass
 class AnnotateTerminationAction(Action):
     """Mark a node as terminated and optionally prune downstream nodes."""
 

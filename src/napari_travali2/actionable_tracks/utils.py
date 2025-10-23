@@ -3,13 +3,18 @@ import tracksdata as td
 import numpy as np
 
 def _remove_connected_edges(graph, node_id, direction: str):
+    if direction not in ['predecessors', 'successors']:
+        raise ValueError(f"Invalid direction '{direction}'. Must be 'predecessors' or 'successors'.")
     if direction == 'predecessors':
         neighbors : pl.DataFrame = graph.predecessors(node_id)
     elif direction == 'successors':
         neighbors : pl.DataFrame = graph.successors(node_id)
     neighbor_node_ids = neighbors[td.DEFAULT_ATTR_KEYS.NODE_ID] if len(neighbors) > 0 else []
     for neighbor_node_id in neighbor_node_ids:
-        graph.remove_edge(node_id, neighbor_node_id)
+        if direction == 'predecessors':
+            graph.remove_edge(neighbor_node_id, node_id)
+        elif direction == 'successors':
+            graph.remove_edge(node_id, neighbor_node_id)
     return neighbor_node_ids
 
 def remove_predecessor_edges(graph, node_id):

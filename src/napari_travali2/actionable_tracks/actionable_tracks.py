@@ -23,6 +23,12 @@ class ActionableTracks:
         else:
             self._safe_tracklet_id = safe_tracklet_id
 
+    
+    def assign_tracklet_ids(self):
+        """Assign tracklet IDs to all nodes in the graph based on connectivity."""
+        self.graph.assign_tracklet_ids(output_key=self.tracklet_id_attr_name)
+        self.initialize_safe_tracklet_id()
+
     def initialize_safe_tracklet_id(self) -> int:
         """Initialize the safe label counter based on existing track IDs.
         
