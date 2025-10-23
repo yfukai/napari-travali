@@ -4,6 +4,8 @@ import abc
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import polars as pl
+
 import tracksdata as td
 
 from . import utils
@@ -38,6 +40,7 @@ def update_tracklet_ids(tracks: "ActionableTracks", node_ids: list[int]):
     tree = tracks.graph.assign_tracklet_ids(
         output_key=tracks.tracklet_id_attr_name,
         node_ids=node_ids,
+        tracklet_id_offset=tracks.safe_tracklet_id,
     )
     tracks.update_safe_tracklet_id(max(tree.nodes()))
 
@@ -93,14 +96,20 @@ class ConnectTrackAction(Action):
                 for pred_id in predecessor_node_ids:
                     tracks.graph.add_edge(pred_id, succ_id, {})
         
+        node_ids = [self.node_id1, self.node_id2, *successor_node_ids, *predecessor_node_ids]
+        successor_node_ids2 : dict[int, pl.DataFrame] = tracks.graph.successors(
+            node_ids=node_ids,
+            attr_keys=[td.DEFAULT_ATTR_KEYS.NODE_ID],
+        )
+        successor_node_ids2_df : pl.DataFrame = pl.concat(list(successor_node_ids2.values()))
+        if not successor_node_ids2_df.is_empty():
+            node_ids.extend(
+                successor_node_ids2_df[td.DEFAULT_ATTR_KEYS.NODE_ID].to_list()
+            )
+        
         update_tracklet_ids(
             tracks,
-            node_ids=[
-                self.node_id1,
-                self.node_id2,
-                *successor_node_ids,
-                *predecessor_node_ids,
-            ],
+            node_ids=node_ids,
         )
         # TODO set undo action
        
@@ -115,8 +124,12 @@ class AnnotateDaughterAction(Action):
         """Attach provided daughter nodes or create new nodes at specified frames."""
         successor_node_ids = utils.remove_successor_edges(tracks.graph, self.node_id)
         daughter_node_ids = []
+        relevant_node_ids = []
         for daughter in self.daughters:
             if isinstance(daughter, int):
+                relevant_node_ids.extend(
+                    utils.remove_predecessor_edges(tracks.graph, daughter)
+                )
                 daughter_node_ids.append(daughter)
                 tracks.graph.add_edge(self.node_id, daughter, {})
             elif isinstance(daughter, tuple):
@@ -136,6 +149,7 @@ class AnnotateDaughterAction(Action):
             tracks,
             node_ids=[self.node_id, *daughter_node_ids, *successor_node_ids],
         )
+        return daughter_node_ids
 
 
 @dataclass
@@ -159,10 +173,16 @@ class MergeLabelsAction(Action):
             },
             node_ids=[self.node_id_target],
         )
+        successor_node_ids = utils.remove_successor_edges(
+            tracks.graph, self.node_id_merged
+        )
+        predecessor_node_ids = utils.remove_predecessor_edges(
+            tracks.graph, self.node_id_merged
+        )
         tracks.graph.remove_node(self.node_id_merged)
         update_tracklet_ids(
             tracks,
-            node_ids=[self.node_id_target],
+            node_ids=[self.node_id_target, *successor_node_ids, *predecessor_node_ids],
         )
 
 @dataclass

@@ -164,6 +164,30 @@ def test_redraw_mask_action_overwrites_mask_and_bbox(sample_graph):
         np.array(updated[tracks.bbox_attr_name][0]), action.new_mask.bbox
     )
 
+    
+
+def _compare_tracklet_id_assignments(expected_node_sets, graph_backend: td.graph.BaseGraph):
+    """Compare tracklet ID assignments in the graph backend to expected node sets. Copied from tracksdata tests."""
+    ids_df = graph_backend.node_attrs(
+        attr_keys=[td.DEFAULT_ATTR_KEYS.NODE_ID, td.DEFAULT_ATTR_KEYS.TRACKLET_ID])
+    ids_map = dict(
+        zip(
+            ids_df[td.DEFAULT_ATTR_KEYS.NODE_ID].to_list(),
+            ids_df[td.DEFAULT_ATTR_KEYS.TRACKLET_ID].to_list(),
+            strict=True,
+        )
+    )
+    assigned = {}
+    for node_id, tracklet_id in ids_map.items():
+        if tracklet_id == -1:
+            continue
+        if tracklet_id not in assigned:
+            assigned[tracklet_id] = []
+        assigned[tracklet_id].append(node_id)
+    assigned = {frozenset(group) for group in assigned.values()}
+    expected = {frozenset(group) for group in expected_node_sets}
+    assert assigned == expected
+
 
 @pytest.mark.parametrize("reconnect_others", [False, True])
 def test_connect_track_action_links_nodes_and_reconnects_successors(sample_graph, reconnect_others):
@@ -171,13 +195,21 @@ def test_connect_track_action_links_nodes_and_reconnects_successors(sample_graph
     
     A0, A1, A2, A3 = nodes_dict["A"]
     B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
-    C1 = nodes_dict["C"]
+    C1, = nodes_dict["C"]
 
-    for (node_id1, node_id2, remove_edges, add_edges_reconnect, tracklet_count) in [
-        (A2, B3, [(A2, A3), (B2, B3)], [(B2, A3)], [6, 5]),
-        (A1, B2, [(A1, A2), (B1, B2)], [(B1, A2)], [4, 5]),
-        (A0, C1, [(A0, A1)], [], [5, 5]),
-        (C1, B4, [(B1, B4)], [], [3, 3]),
+    for (node_id1, node_id2, remove_edges, add_edges_reconnect, tracklet_node_sets) in [
+        (A2, B3, [(A2, A3), (B2, B3)], [(B2, A3)], 
+         [[[A0, A1, A2, B3], [A3], [B0, B1], [B2], [B4, B5], [C1]] ,
+          [[A0, A1, A2, B3], [B0, B1], [B2, A3], [B4, B5], [C1]]]),
+        (A1, B2, [(A1, A2), (B1, B2)], [(B1, A2)], 
+         [[[A0, A1, B2, B3], [A2, A3], [B0, B1, B4, B5], [C1]],
+          [[A0, A1, B2, B3], [A2, A3], [B0, B1], [B4, B5], [C1]]]),
+        (A0, C1, [(A0, A1)], [], 
+         [[[A0, C1], [A1, A2, A3], [B0, B1], [B2, B3], [B4, B5]],
+          [[A0, C1], [A1, A2, A3], [B0, B1], [B2, B3], [B4, B5]]]),
+        (C1, B4, [(B1, B4)], [], 
+         [[[A0, A1, A2, A3], [B0, B1, B2, B3], [C1, B4, B5]],
+          [[A0, A1, A2, A3], [B0, B1, B2, B3], [C1, B4, B5]]]),
     ]:
         tracks = ActionableTracks(deepcopy(graph))
         tracks.assign_tracklet_ids()
@@ -199,12 +231,10 @@ def test_connect_track_action_links_nodes_and_reconnects_successors(sample_graph
         # Check if isomorphic
         _assert_graphs_isomorphic(tracks.graph, target_graph)
         # Check tracklet IDs
-        tracklet_ids = tracks.graph.node_attrs(
-            attr_keys=[tracks.tracklet_id_attr_name]
-        )[tracks.tracklet_id_attr_name].unique().to_list()
-        tracklet_count = tracklet_count[1] if reconnect_others else tracklet_count[0]
-        assert len(tracklet_ids) == tracklet_count, f"Failed for nodes {node_id1}, {node_id2} with reconnect_others={reconnect_others}"
-        
+        _compare_tracklet_id_assignments(
+            tracklet_node_sets[1 if reconnect_others else 0],
+            tracks.graph,
+        )        
 
 def test_connect_track_action_validates_time_ordering():
     graph = _make_empty_graph()
@@ -222,63 +252,105 @@ def test_connect_track_action_validates_time_ordering():
         action.apply(tracks)
 
 
-#def test_annotate_daughter_action_reuses_and_creates_nodes():
-#    graph = _make_graph()
-#    parent = _add_node(graph, t=0, offset=0)
-#    existing = _add_node(graph, t=2, offset=5)
-#    graph.add_edge(parent, existing, {})
-#    tracks = ActionableTracks(graph)
-#
-#    action = AnnotateDaughterAction()
-#    action.node_id = parent
-#    new_mask = _make_mask(offset=15)
-#    action.daughters = [existing, (4, new_mask)]
-#    before_ids = set(tracks.graph.node_ids())
-#    action.apply(tracks)
-#    after_ids = set(tracks.graph.node_ids())
-#
-#    new_nodes = list(after_ids - before_ids)
-#    assert len(new_nodes) == 1
-#    new_node_id = new_nodes[0]
-#
-#    assert graph.has_edge(parent, existing)
-#    assert graph.has_edge(parent, new_node_id)
-#
-#    created_attrs = graph.filter(node_ids=[new_node_id]).node_attrs(
-#        [td.DEFAULT_ATTR_KEYS.T, tracks.mask_attr_name, tracks.bbox_attr_name]
-#    )
-#    assert created_attrs[td.DEFAULT_ATTR_KEYS.T][0] == 4
-#    assert created_attrs[tracks.mask_attr_name][0] == new_mask
-#    assert np.array_equal(
-#        np.array(created_attrs[tracks.bbox_attr_name][0]), new_mask.bbox
-#    )
-#
-#
-#def test_merge_labels_action_unifies_masks_and_removes_source_node():
-#    graph = _make_graph()
-#    target_mask = _make_mask(offset=0)
-#    merged_mask = _make_mask(offset=2, extra_pixel=True)
-#    target = _add_node(graph, t=1, offset=0, mask=target_mask)
-#    merged = _add_node(graph, t=1, offset=2, mask=merged_mask)
-#    tracks = ActionableTracks(graph)
-#
-#    action = MergeLabelsAction()
-#    action.node_id_target = target
-#    action.node_id_merged = merged
-#    action.apply(tracks)
-#
-#    remaining_ids = list(graph.node_ids())
-#    assert merged not in remaining_ids
-#    filtered = graph.filter(node_ids=[target]).node_attrs(
-#        [tracks.mask_attr_name, tracks.bbox_attr_name]
-#    )
-#    expected_mask = target_mask | merged_mask
-#    assert filtered[tracks.mask_attr_name][0] == expected_mask
-#    assert np.array_equal(
-#        np.array(filtered[tracks.bbox_attr_name][0]), expected_mask.bbox
-#    )
-#
-#
+def test_annotate_daughter_action_reuses_and_creates_nodes(sample_graph):
+    graph, nodes_dict = sample_graph
+    
+    A0, A1, A2, A3 = nodes_dict["A"]
+    B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
+    C1, = nodes_dict["C"]
+
+    parent = B1
+    existing = A2
+    new_mask = _make_mask(offset=4)
+    tracks = ActionableTracks(deepcopy(graph))
+    tracks.assign_tracklet_ids()
+    action = AnnotateDaughterAction(
+        node_id=B1,
+        daughters=[
+            A2,  # existing node
+            (2, new_mask) # new node
+        ],
+    )
+    before_node_ids = set(tracks.graph.node_ids())
+    daughter_node_ids = action.apply(tracks)
+    new_node_id = daughter_node_ids[1]
+    after_node_ids = set(tracks.graph.node_ids())
+    assert before_node_ids.union({new_node_id}) == after_node_ids
+    assert new_node_id not in before_node_ids
+
+    assert tracks.graph.has_edge(parent, existing)
+    assert tracks.graph.has_edge(parent, new_node_id)
+
+    created_attrs = tracks.graph.filter(node_ids=[new_node_id]).node_attrs(
+        [td.DEFAULT_ATTR_KEYS.T, tracks.mask_attr_name, tracks.bbox_attr_name]
+    )
+    assert created_attrs[td.DEFAULT_ATTR_KEYS.T][0] == 2
+    assert created_attrs[tracks.mask_attr_name][0] == new_mask
+    assert np.array_equal(
+        np.array(created_attrs[tracks.bbox_attr_name][0]), new_mask.bbox
+    )
+
+    _compare_tracklet_id_assignments(
+        [[A0, A1], [A2, A3], [B0, B1], [B2, B3], [B4, B5], [new_node_id], [C1]],
+        tracks.graph,
+    )
+
+    target_graph = deepcopy(graph)
+    target_graph.add_edge(parent, existing, {})
+    target_graph.remove_edge(A1, A2)
+    new_node_id_target = target_graph.add_node(
+        {
+            td.DEFAULT_ATTR_KEYS.T: 2,
+            tracks.mask_attr_name: new_mask,
+            tracks.bbox_attr_name: new_mask.bbox,
+            tracks.tracklet_id_attr_name: -1,
+            "termination_annotation": "",
+        }
+    )
+    target_graph.add_edge(parent, new_node_id_target, {})
+    target_graph.remove_edge(B1, B2)
+    target_graph.remove_edge(B1, B4)
+    _assert_graphs_isomorphic(tracks.graph, target_graph)
+
+
+def test_merge_labels_action_unifies_masks_and_removes_source_node(sample_graph):
+    graph, nodes_dict = sample_graph
+
+    A0, A1, A2, A3 = nodes_dict["A"]
+    B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
+    C1, = nodes_dict["C"]
+    
+    tracks = ActionableTracks(deepcopy(graph))
+    masks = graph.filter(node_ids=[A2, B2, B4]).node_attrs(
+        [tracks.mask_attr_name]
+    )
+    A2_mask = masks[tracks.mask_attr_name][0]
+    B2_mask = masks[tracks.mask_attr_name][1]
+    B4_mask = masks[tracks.mask_attr_name][2]
+    
+    tracks.assign_tracklet_ids()
+    action = MergeLabelsAction(
+        node_id_merged=A2,
+        node_id_target=B2,
+    )
+    action.apply(tracks)
+
+    remaining_ids = list(tracks.graph.node_ids())
+    assert A2 not in remaining_ids
+    filtered = tracks.graph.filter(node_ids=[B2]).node_attrs(
+        [tracks.mask_attr_name, tracks.bbox_attr_name]
+    )
+    expected_mask = A2_mask | B2_mask
+    assert filtered[tracks.mask_attr_name][0] == expected_mask
+    assert np.array_equal(
+        np.array(filtered[tracks.bbox_attr_name][0]), expected_mask.bbox
+    )
+    _compare_tracklet_id_assignments(
+        [[A0, A1], [A3], [B0, B1], [B2, B3], [B4, B5], [C1]],
+        tracks.graph,
+    )
+
+
 #@pytest.mark.parametrize(
 #    "delete_successors", [False, True]
 #)
