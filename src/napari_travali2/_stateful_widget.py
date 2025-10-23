@@ -7,11 +7,9 @@ from ._logging import logger, log_error
 from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,choose_division_by_mbox, ask_draw_label
 from ._consts import SELECTED_COLOR, DAUGHTER_COLORS
 import numpy as np
-import tensorstore as ts
 from dask import array as da
 import pandas as pd
 from copy import deepcopy
-import trackarray_tensorstore as tats
 from napari.utils.colormaps import label_colormap
 
 def default_colormap():
@@ -27,7 +25,6 @@ SHOW_SELECTED_LABEL_STATES = [
 ]
 
 VIEWER_STATE_VISIBILITY = { 
-                           # [label_layer, redraw_layer]
     ViewerState.ALL_LABEL:      [True, False],
     ViewerState.LABEL_SELECTED: [True, False],
     ViewerState.LABEL_REDRAW:   [False, True],
@@ -40,11 +37,12 @@ VIEWER_STATE_VISIBILITY = {
 class StateMachineWidget(Container):
     def __init__(self, 
                  viewer: Viewer, 
-                 ta: tats.TrackArray, 
+                 td,
                  image_data,
                  verified_track_ids=set(),
                  candidate_track_ids=set(),
-                 crop_size=1024):
+                 crop_size=1024,
+                 ):
         super().__init__()
 
         self._viewer = viewer
