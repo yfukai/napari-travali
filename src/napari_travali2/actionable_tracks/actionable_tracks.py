@@ -1,6 +1,6 @@
 import tracksdata as td
-import abc
 from .action import Action
+import polars as pl
    
 
 class ActionableTracks:
@@ -23,11 +23,6 @@ class ActionableTracks:
         else:
             self._safe_tracklet_id = safe_tracklet_id
 
-    
-    def assign_tracklet_ids(self):
-        """Assign tracklet IDs to all nodes in the graph based on connectivity."""
-        self.graph.assign_tracklet_ids(output_key=self.tracklet_id_attr_name)
-        self.initialize_safe_tracklet_id()
 
     def initialize_safe_tracklet_id(self) -> int:
         """Initialize the safe label counter based on existing track IDs.
@@ -38,11 +33,16 @@ class ActionableTracks:
             The assigned safe tracklet ID to use.
             
         """
-        df = self.graph.node_attrs(attr_keys=self.tracklet_id_attr_name)
-        self._safe_tracklet_id = int(df[self.tracklet_id_attr_name].max() + 1)
+        df = self.graph.node_attrs(
+            attr_keys=self.tracklet_id_attr_name
+        ).filter(pl.col(self.tracklet_id_attr_name) != -1)
+        if len(df) == 0:
+            self._safe_tracklet_id = 1
+        else:
+            self._safe_tracklet_id = int(df[self.tracklet_id_attr_name].max() + 1)
         return self._safe_tracklet_id
     
-    def update_safe_tracklet_id(self, new_tracklet_id=0) -> int:
+    def _update_safe_tracklet_id(self, new_tracklet_id=0) -> int:
         """Update the safe label counter to ensure a unique track ID.
 
         Parameters
@@ -58,6 +58,21 @@ class ActionableTracks:
         """
         self._safe_tracklet_id = max(self._safe_tracklet_id, new_tracklet_id + 1)
         return self._safe_tracklet_id
+
+    def assign_tracklet_ids(self, node_ids: list[int] | None = None):
+        """Update tracklet IDs for specified nodes and their connected components.
+
+        Parameters
+        ----------
+        node_ids : list[int]
+            List of node IDs to update tracklet IDs for.
+        """
+        tree = self.graph.assign_tracklet_ids(
+            output_key=self.tracklet_id_attr_name,
+            node_ids=node_ids,
+            tracklet_id_offset=self.safe_tracklet_id,
+        )
+        self._update_safe_tracklet_id(max(tree.nodes()))
 
     @property
     def safe_tracklet_id(self):

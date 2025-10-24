@@ -11,7 +11,6 @@ from napari_travali2.actionable_tracks.action import (
     ConnectTrackAction,
     MergeLabelsAction,
     RedrawMaskAction,
-    update_tracklet_ids,
 )
 from napari_travali2.actionable_tracks.actionable_tracks import ActionableTracks
 
@@ -120,7 +119,7 @@ def sample_graph():
     }   
 
 
-def test_update_tracklet_ids_assigns_consistent_ids():
+def test_assign_tracklet_ids_assigns_consistent_ids():
     graph = _make_empty_graph()
     node_ids = [
         _add_node(graph, t=frame, offset=frame * 10) for frame in range(3)
@@ -129,7 +128,7 @@ def test_update_tracklet_ids_assigns_consistent_ids():
     graph.add_edge(node_ids[1], node_ids[2], {})
     tracks = ActionableTracks(graph)
 
-    update_tracklet_ids(tracks, node_ids)
+    tracks.assign_tracklet_ids(node_ids)
 
     df = graph.filter(node_ids=node_ids).node_attrs(
         [td.DEFAULT_ATTR_KEYS.TRACKLET_ID]
@@ -351,31 +350,55 @@ def test_merge_labels_action_unifies_masks_and_removes_source_node(sample_graph)
     )
 
 
-#@pytest.mark.parametrize(
-#    "delete_successors", [False, True]
-#)
-#def test_annotate_termination_action_updates_annotation_and_handles_successors(
-#    delete_successors: bool
-#):
-#    graph = _make_graph()
-#    parent = _add_node(graph, t=1, offset=0)
-#    child = _add_node(graph, t=3, offset=5)
-#    graph.add_edge(parent, child, {})
-#    graph.assign_tracklet_ids()
-#    tracks = ActionableTracks(graph)
-#
-#    action = AnnotateTerminationAction()
-#    action.node_id = parent
-#    action.termination_annotation = "finished"
-#    action.delete_successors = delete_successors
-#    action.apply(tracks)
-#
-#    attrs = graph.filter(node_ids=[parent]).node_attrs(
-#        [tracks.termination_annotation_attr_name]
-#    )
-#    assert attrs[tracks.termination_annotation_attr_name][0] == "finished"
-#    assert not graph.has_edge(parent, child)
-#
-#    child_exists = child in set(graph.node_ids())
-#    assert child_exists is (not delete_successors)
-#
+@pytest.mark.parametrize("delete_successor_tracklet", [False, True])
+def test_annotate_termination_action_updates_annotation_and_handles_successors(
+    sample_graph, delete_successor_tracklet: bool
+):
+    graph, nodes_dict = sample_graph
+    A0, A1, A2, A3 = nodes_dict["A"]
+    B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
+    C1, = nodes_dict["C"]
+
+    for node_id, expected_remaining_node_ids, expected_groups in [
+        (
+            B1,
+            { True: {A0, A1, A2, A3, B0, B1, B2, B3, B4, B5, C1},
+              False: {A0, A1, A2, A3, B0, B1, B2, B3, B4, B5, C1},
+            }[delete_successor_tracklet],
+            { 
+             True:  [[A0, A1, A2, A3],[B0, B1],[B2, B3],[B4, B5],[C1]],
+             False: [[A0, A1, A2, A3],[B0, B1],[B2, B3],[B4, B5],[C1]],
+            }[delete_successor_tracklet],
+        ),
+        (
+            B2,
+            { True: {A0, A1, A2, A3, B0, B1, B2, B4, B5, C1},
+              False: {A0, A1, A2, A3, B0, B1, B2, B3, B4, B5, C1},
+            }[delete_successor_tracklet],
+            { 
+             True:  [[A0, A1, A2, A3],[B0, B1],[B2],[B4, B5],[C1]],
+             False: [[A0, A1, A2, A3],[B0, B1],[B2], [B3],[B4, B5],[C1]],
+            }[delete_successor_tracklet],
+        ),
+    ]:
+        tracks = ActionableTracks(deepcopy(graph))
+        tracks.assign_tracklet_ids()
+
+        action = AnnotateTerminationAction(
+            node_id=node_id,
+            termination_annotation="finished",
+            delete_successor_tracklet=delete_successor_tracklet,
+        )
+        action.apply(tracks)
+
+        attrs = tracks.graph.filter(node_ids=[node_id]).node_attrs(
+            [tracks.termination_annotation_attr_name]
+        )
+        assert attrs[tracks.termination_annotation_attr_name][0] == "finished"
+        assert tracks.graph.successors(node_id).is_empty()
+
+        remaining_node_ids = set(tracks.graph.node_ids())
+        assert remaining_node_ids == expected_remaining_node_ids
+
+        _compare_tracklet_id_assignments(expected_groups, tracks.graph)
+

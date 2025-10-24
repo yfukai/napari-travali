@@ -27,22 +27,6 @@ class Action(abc.ABC):
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
-def update_tracklet_ids(tracks: "ActionableTracks", node_ids: list[int]):
-    """Update tracklet IDs for the specified node IDs.
-
-    Parameters
-    ----------
-    tracks : ActionableTracks
-        The ActionableTracks instance managing the graph.
-    node_ids : list[int]
-        List of node IDs to update tracklet IDs for.
-    """
-    tree = tracks.graph.assign_tracklet_ids(
-        output_key=tracks.tracklet_id_attr_name,
-        node_ids=node_ids,
-        tracklet_id_offset=tracks.safe_tracklet_id,
-    )
-    tracks.update_safe_tracklet_id(max(tree.nodes()))
 
 @dataclass
 class RedrawMaskAction(Action):
@@ -107,9 +91,8 @@ class ConnectTrackAction(Action):
                 successor_node_ids2_df[td.DEFAULT_ATTR_KEYS.NODE_ID].to_list()
             )
         
-        update_tracklet_ids(
-            tracks,
-            node_ids=node_ids,
+        tracks.assign_tracklet_ids(
+            node_ids,
         )
         # TODO set undo action
        
@@ -145,9 +128,8 @@ class AnnotateDaughterAction(Action):
                 )
                 daughter_node_ids.append(new_node_id)
                 tracks.graph.add_edge(self.node_id, new_node_id, {})
-        update_tracklet_ids(
-            tracks,
-            node_ids=[self.node_id, *daughter_node_ids, *successor_node_ids],
+        tracks.assign_tracklet_ids(
+            [self.node_id, *daughter_node_ids, *successor_node_ids],
         )
         return daughter_node_ids
 
@@ -180,9 +162,8 @@ class MergeLabelsAction(Action):
             tracks.graph, self.node_id_merged
         )
         tracks.graph.remove_node(self.node_id_merged)
-        update_tracklet_ids(
-            tracks,
-            node_ids=[self.node_id_target, *successor_node_ids, *predecessor_node_ids],
+        tracks.assign_tracklet_ids(
+            [self.node_id_target, *successor_node_ids, *predecessor_node_ids],
         )
 
 @dataclass
@@ -191,7 +172,7 @@ class AnnotateTerminationAction(Action):
 
     node_id: int
     termination_annotation: str = "terminated"
-    delete_successors: bool = False
+    delete_successor_tracklet: bool = False
 
     def apply(self, tracks: ActionableTracks):
         """Set a termination annotation and optionally delete subsequent nodes in the tracklet."""
@@ -200,14 +181,17 @@ class AnnotateTerminationAction(Action):
             attrs={tracks.termination_annotation_attr_name: [self.termination_annotation]},
             node_ids=[self.node_id]
         )
-        if self.delete_successors and len(successor_node_ids) > 0:
-            nodes_to_delete = list(successor_node_ids)
-            while nodes_to_delete:
-                current_node_id = nodes_to_delete.pop()
-                successors_df = tracks.graph.successors(current_node_id)
-                if len(successors_df) > 0:
-                    nodes_to_delete.extend(
-                        successors_df[td.DEFAULT_ATTR_KEYS.NODE_ID].to_list()
-                    )
-                tracks.graph.remove_node(current_node_id)
-    
+        if self.delete_successor_tracklet:
+            time, tracklet_id = tracks.graph.filter(
+                node_ids=[self.node_id]
+            ).node_attrs(
+                attr_keys=[tracks.time_attr_name, tracks.tracklet_id_attr_name]
+            ).to_dicts()[0].values()
+            deleted_node_ids = tracks.graph.filter(
+                td.NodeAttr(tracks.time_attr_name) > time,
+                td.NodeAttr(tracks.tracklet_id_attr_name) == tracklet_id,
+            ).node_ids()
+            for del_node_id in deleted_node_ids:
+                tracks.graph.remove_node(del_node_id)
+            successor_node_ids = [*successor_node_ids, *deleted_node_ids]
+        tracks.assign_tracklet_ids([self.node_id, *successor_node_ids])
