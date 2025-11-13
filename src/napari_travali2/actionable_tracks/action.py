@@ -28,6 +28,37 @@ class Action(abc.ABC):
         raise NotImplementedError("Subclasses must implement this method.")
 
 
+
+@dataclass
+class AddNodeAction(Action):
+    """Add a new node to the tracks graph."""
+
+    frame: int
+    mask: td.nodes.Mask
+    connected_node_id: int | None = None
+
+    def apply(self, tracks: ActionableTracks):
+        """Add a new node with the specified frame and mask."""
+        new_node_id = tracks.graph.add_node(
+            attrs={
+                tracks.mask_attr_name: self.mask,
+                tracks.bbox_attr_name: self.mask.bbox,
+                tracks.time_attr_name: self.frame,
+                tracks.tracklet_id_attr_name: -1,
+                tracks.termination_annotation_attr_name: "",
+            }
+        )
+        if self.connected_node_id is not None:
+            times = utils.get_times(
+                tracks.graph, [self.connected_node_id, new_node_id]
+            )
+            if times[self.connected_node_id] < times[new_node_id]:
+                tracks.graph.add_edge(self.connected_node_id, new_node_id, {})
+            else:
+                tracks.graph.add_edge(new_node_id, self.connected_node_id, {})
+        tracks.assign_tracklet_ids([new_node_id])
+        return new_node_id
+
 @dataclass
 class RedrawMaskAction(Action):
     """Replace the segmentation mask of a single node."""
@@ -119,9 +150,9 @@ class AnnotateDaughterAction(Action):
                 frame, mask = daughter
                 new_node_id = tracks.graph.add_node(
                     attrs={
-                        td.DEFAULT_ATTR_KEYS.MASK: mask,
-                        td.DEFAULT_ATTR_KEYS.BBOX: mask.bbox,
-                        td.DEFAULT_ATTR_KEYS.T: frame,
+                        tracks.mask_attr_name: mask,
+                        tracks.bbox_attr_name: mask.bbox,
+                        tracks.time_attr_name: frame,
                         tracks.tracklet_id_attr_name: -1,
                         tracks.termination_annotation_attr_name: "",
                     }
