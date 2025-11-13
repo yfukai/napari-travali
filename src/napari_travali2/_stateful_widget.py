@@ -6,11 +6,14 @@ from ._transitions import ViewerState, TRANSITIONS, STATE_EXPLANATION
 from ._logging import logger, log_error
 from ._gui_utils import choose_direction_by_mbox, get_annotation_of_track_end,choose_division_by_mbox, ask_draw_label
 from ._consts import SELECTED_COLOR, DAUGHTER_COLORS
+from ._track_utils import find_track_successors
 import numpy as np
 from dask import array as da
 import pandas as pd
 from copy import deepcopy
+from .actionable_tracks import actionable_tracks as at
 from napari.utils.colormaps import label_colormap
+import tracksdata as td
 
 def default_colormap():
     return label_colormap(
@@ -24,57 +27,85 @@ SHOW_SELECTED_LABEL_STATES = [
     ViewerState.DAUGHTER_DRAW,
 ]
 
-VIEWER_STATE_VISIBILITY = { 
-    ViewerState.ALL_LABEL:      [True, False],
-    ViewerState.LABEL_SELECTED: [True, False],
-    ViewerState.LABEL_REDRAW:   [False, True],
-    ViewerState.LABEL_SWITCH:   [True, False],
-    ViewerState.DAUGHTER_SWITCH:[True, False],
-    ViewerState.DAUGHTER_DRAW:  [False, True],
-    ViewerState.DAUGHTER_CHOOSE_MODE: [True, False],
+LAYER_NAMES = [
+    "image",
+    "labels",
+    "cropped_image",
+    "cropped_labels",
+    "redraw",
+]
+VIEWER_VISIBLE_LAYERS = { 
+    ViewerState.ALL_LABEL:      ["image", "labels"],
+    ViewerState.LABEL_SELECTED: ["cropped_image", "cropped_labels"],
+    ViewerState.LABEL_REDRAW:   ["redraw"],
+    ViewerState.LABEL_SWITCH:   ["cropped_image", "cropped_labels"],
+    ViewerState.DAUGHTER_SWITCH:["cropped_image", "cropped_labels"],
+    ViewerState.DAUGHTER_DRAW:  ["redraw"],
+    ViewerState.DAUGHTER_CHOOSE_MODE: ["cropped_image", "cropped_labels"],
 }
 
 class StateMachineWidget(Container):
+
+    def __initialize_layers(self):
+        if "Cropped Image" in self._viewer.layers:
+            self._viewer.layers.remove(self._viewer.layers["Cropped Image"])
+        self._cropped_image_layer = self._viewer.add_image(
+            da.zeros(self.cropped_shape, dtype=self.image_dtype), 
+            name="Cropped Image")
+        
+        if "Cropped Labels" in self._viewer.layers:
+            self._viewer.layers.remove(self._viewer.layers["Cropped Labels"])
+        self._cropped_labels_layer = self._viewer.add_labels(
+            da.zeros(self.cropped_shape, dtype=self.label_dtype), 
+            name="Cropped Labels")
+
+        if "Redraw" in self._viewer.layers:
+            self._viewer.layers.remove(self._viewer.layers["Redraw"])
+        self._redraw_layer = self._viewer.add_labels(
+            np.zeros(self.shape, dtype=bool), 
+            name="Redraw", cache=False)
+
+    def __bind_events(self):
+        # XXX possibly refactor this
+        self._viewer.bind_key("o", lambda event: self.o_typed(), overwrite=True)
+        self._viewer.bind_key("r", lambda event: self.r_typed(), overwrite=True)
+        self._viewer.bind_key("s", lambda event: self.s_typed(), overwrite=True)
+        self._viewer.bind_key("d", lambda event: self.d_typed(), overwrite=True)
+        self._viewer.bind_key("t", lambda event: self.t_typed(), overwrite=True)
+        self._viewer.bind_key("n", lambda event: self.n_typed(), overwrite=True)
+        self._viewer.bind_key("c", lambda event: self.c_typed(), overwrite=True)
+        
+        self._viewer.mouse_drag_callbacks.append(self._track_clicked_wrapper)        
+        self._label_layer.mouse_drag_callbacks.append(self._region_clicked_wrapper)
+
     def __init__(self, 
                  viewer: Viewer, 
-                 td,
-                 image_data,
+                 tracks: at.ActionableTracks,
+                 image: np.ndarray,
                  verified_track_ids=set(),
                  candidate_track_ids=set(),
                  crop_size=1024,
+                 tracklet_attr_name="label",
                  ):
         super().__init__()
 
         self._viewer = viewer
-        self._image_layer = viewer.add_image([image_data, image_data[::2,::2]], name="Image")
-        self._label_layer = viewer.add_labels([ta.array, ta.array[::2,::2]], name="Labels")
+        self._gav = td.array.GraphArrayView(tracks.graph, 
+                                            shape=tuple([image.shape[0], *image.shape[2:]]), 
+                                            attr_key=tracklet_attr_name)
+        self._image_layer = viewer.add_image([image, image[::2,::2]], name="Image")
+        self._label_layer = viewer.add_labels([self._gav, self._gav[::2,::2]], name="Labels")
         self.crop_size = crop_size
+        self.tracklet_attr_name = tracklet_attr_name
         self.verified_track_ids = set(map(int,verified_track_ids))
         self.candidate_track_ids = set(map(int,candidate_track_ids))
 
-        shape = ta.array.shape[:-2]
-        cropped_shape = (*shape, crop_size, crop_size)
-        if "Cropped Image" in viewer.layers:
-            viewer.layers.remove(viewer.layers["Cropped Image"])
-        self._cropped_image_layer = viewer.add_image(
-            da.zeros(cropped_shape, dtype=image_data.dtype.name), 
-            name="Cropped Image")
-        
-        if "Cropped Labels" in viewer.layers:
-            viewer.layers.remove(viewer.layers["Cropped Labels"])
-        self._cropped_label_layer = viewer.add_labels(
-            da.zeros(cropped_shape, dtype=ta.array.dtype.name), 
-            name="Cropped Labels")
-        
-        if "Redraw" in viewer.layers:
-            viewer.layers.remove(viewer.layers["Redraw"])
-        self._redraw_layer = viewer.add_labels(
-            np.zeros(ta.array.shape[-2:],dtype=bool), 
-            name="Redraw", cache=False)
-        
-        self.txn = None
-        self.ta = ta
-        self.image_data = image_data
+        self.shape = self._gav.shape[:-2]
+        self.image_dtype = image.dtype.name
+        self.label_dtype = self._gav.dtype
+        self.cropped_shape = (*self.shape, crop_size, crop_size)
+        self.__initialize_layers()
+        self.image = image
 
         # Add a label to show the current state
         self._state_label = Label(value=f"Before initialization.")
@@ -90,59 +121,42 @@ class StateMachineWidget(Container):
                                after_state_change="update_viewer_status",
                                ignore_invalid_triggers=True)
         
+        self.__bind_events()
 
-        # XXX possibly refactor this
-        self._viewer.bind_key("o", lambda event: self.o_typed(), overwrite=True)
-        self._viewer.bind_key("r", lambda event: self.r_typed(), overwrite=True)
-        self._viewer.bind_key("s", lambda event: self.s_typed(), overwrite=True)
-        self._viewer.bind_key("d", lambda event: self.d_typed(), overwrite=True)
-        self._viewer.bind_key("t", lambda event: self.t_typed(), overwrite=True)
-        self._viewer.bind_key("n", lambda event: self.n_typed(), overwrite=True)
-        self._viewer.bind_key("c", lambda event: self.c_typed(), overwrite=True)
-        
-        @log_error
-        def track_clicked(layer, event):
-            logger.info(event.modifiers)
-            logger.info("Track clicked")
-            yield  # important to avoid a potential bug when selecting the daughter
-            logger.info("button released")
-            data_coordinates = layer.world_to_data(event.position)
-            logger.debug(f"world coordinates: {event.position}")
-            logger.debug(f"data coordinates: {data_coordinates}")
-            coords = np.round(data_coordinates).astype(int)
-            val = layer.get_value(data_coordinates)
-            try:
-                _ = iter(val)
-                val = val[-1]
-            except TypeError as te:
-                pass
-                
-            if val is None:
-                return
-            if val != 0:
-                if "Control" in event.modifiers:
-                    logger.info("Control pressed, removing from the verified or candidate list")
-                    self.verified_track_ids.discard(int(val))
-                    self.candidate_track_ids.discard(int(val))
-                    self.update_finalized_point_layer()
-                    self._write_verified_and_candidates()
-                else:
-                    frame = coords[0]
-                    logger.info(f"clicked at {coords} at frame {frame} and label value {val}")
-                    self.track_clicked(frame, val)
-        self._cropped_label_layer.mouse_drag_callbacks.append(track_clicked)
-        
-        @log_error
-        def region_clicked(layer, event):
-            logger.info("Region clicked")
-            data_coordinates = layer.world_to_data(event.position)
-            cords = np.round(data_coordinates).astype(int)
-            logger.info(f"clicked at {cords}")
-            self.region_clicked(cords)
-        self._label_layer.mouse_drag_callbacks.append(region_clicked)
-        
         self.update_finalized_point_layer()
         self.update_viewer_status()  
+        
+    def _track_clicked_wrapper(self, viewer, event):
+        if self.state == ViewerState.SELECT_REGION:
+            return # Does nothing if the state is "select region"
+        logger.info(event.modifiers)
+        logger.info("Track clicked")
+        yield  # important to avoid a potential bug when selecting the daughter
+        logger.info("button released")
+        data_coordinates = self._cropped_labels_layer.world_to_data(event.position)
+        logger.debug(f"world coordinates: {event.position}")
+        logger.debug(f"data coordinates: {data_coordinates}")
+#            if "Control" in event.modifiers:
+#                logger.info("Control pressed, removing from the verified or candidate list")
+#                self.verified_track_ids.discard(int(val))
+#                self.candidate_track_ids.discard(int(val))
+#                self.update_finalized_point_layer()
+#                self._write_verified_and_candidates()
+#            else:
+#                frame = coords[0]
+#                logger.info(f"clicked at {coords} at frame {frame} and label value {val}")
+#                self.track_clicked(frame, val)
+#
+        
+    @log_error
+    def _region_clicked_wrapper(self, viewer, event):
+        if self.state != ViewerState.SELECT_REGION:
+            return # Does nothing if the state is not "select region"
+        logger.info("Region clicked")
+        data_coordinates = self._label_layer.world_to_data(event.position)
+        cords = np.round(data_coordinates).astype(int)
+        logger.info(f"clicked at {cords}")
+        self.region_clicked(cords)
         
     @log_error    
     def update_viewer_status(self,*_args):
@@ -155,7 +169,7 @@ class StateMachineWidget(Container):
             self._label_layer.visible = True
             self._image_layer.visible = True
             self._cropped_image_layer.visible = False
-            self._cropped_label_layer.visible = False
+            self._cropped_labels_layer.visible = False
             self._redraw_layer.visible = False
             self._viewer.layers.selection.active = self._label_layer
         else:
@@ -163,13 +177,13 @@ class StateMachineWidget(Container):
             self._image_layer.visible = False
             self._cropped_image_layer.visible = True
             visibility = VIEWER_STATE_VISIBILITY[self.state]
-            for layer, visible in zip([self._cropped_label_layer, self._redraw_layer], visibility):
+            for layer, visible in zip([self._cropped_labels_layer, self._redraw_layer], visibility):
                 layer.visible = visible
-            active_layer = self._cropped_label_layer if visibility[0] else self._redraw_layer
+            active_layer = self._cropped_labels_layer if visibility[0] else self._redraw_layer
             self._viewer.layers.selection.active = active_layer
 
             if self.state not in SHOW_SELECTED_LABEL_STATES:
-                self._cropped_label_layer.colormap = default_colormap()
+                self._cropped_labels_layer.colormap = default_colormap()
             else:
                 self.set_selected_colormap()
 
@@ -216,7 +230,7 @@ class StateMachineWidget(Container):
     
     @log_error
     def set_selected_colormap(self):
-        self._cropped_label_layer.colormap = {0:(0,0,0,0), 
+        self._cropped_labels_layer.colormap = {0:(0,0,0,0), 
                                               self._selected_label:SELECTED_COLOR,
                                               **{d:c for d,c in zip(self._daughters,DAUGHTER_COLORS)},
                                               None:(0,0,0,0)}
@@ -235,12 +249,12 @@ class StateMachineWidget(Container):
         self.window = window
         logger.info(f"window selected: {window}")
         translate = [0]+[s.start for s in window[1:]]
-        self._cropped_image_layer.data = self.image_data[window][ts.d[:].translate_to[0]]
+        self._cropped_image_layer.data = self.image[window][ts.d[:].translate_to[0]]
         self._cropped_image_layer.translate = translate
         cropped_label = self.ta.array[window][ts.d[:].translate_to[0]]
         self._cropped_label = cropped_label
-        self._cropped_label_layer.data = cropped_label
-        self._cropped_label_layer.translate = translate
+        self._cropped_labels_layer.data = cropped_label
+        self._cropped_labels_layer.translate = translate
 
     
     ################ Select tracks, finalize and abort edits ################
@@ -254,8 +268,8 @@ class StateMachineWidget(Container):
         assert self.txn is None
         self.txn = ts.Transaction()
         array_txn = self._cropped_label.with_transaction(self.txn)
-        self._cropped_label_layer.data = array_txn
-        self._cropped_label_layer.selected_label = val
+        self._cropped_labels_layer.data = array_txn
+        self._cropped_labels_layer.selected_label = val
         self.update_daughters()
 
     @log_error
@@ -282,7 +296,7 @@ class StateMachineWidget(Container):
         self.ta.write_properties()   
         self.txn.commit_sync()
         
-        self._cropped_label_layer.data = self._cropped_label
+        self._cropped_labels_layer.data = self._cropped_label
     
         self.txn = None
         self.update_finalized_point_layer()
@@ -290,7 +304,7 @@ class StateMachineWidget(Container):
     @log_error    
     def abort_transaction(self):
         logger.info("Transaction aborted")
-        self._cropped_label_layer.data = self._cropped_label
+        self._cropped_labels_layer.data = self._cropped_label
         self.ta._bboxes_dict = self.original_bboxes_dict
         self.ta.splits = self.original_splits
         self.ta.termination_annotations = self.original_termination_annotations

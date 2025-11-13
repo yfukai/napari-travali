@@ -4,15 +4,22 @@ import polars as pl
    
 
 class ActionableTracks:
-    time_attr_name: str = td.DEFAULT_ATTR_KEYS.T
-    mask_attr_name: str = td.DEFAULT_ATTR_KEYS.MASK
-    bbox_attr_name: str = td.DEFAULT_ATTR_KEYS.BBOX
-    tracklet_id_attr_name: str = td.DEFAULT_ATTR_KEYS.TRACKLET_ID
-    termination_annotation_attr_name: str = "termination_annotation"
-
     def __init__(self, 
                  graph: td.graph.BaseGraph, 
-                 safe_tracklet_id : int | None = None) -> None:
+                 safe_tracklet_id : int | None = None,
+                 *,
+                 time_attr_name: str = td.DEFAULT_ATTR_KEYS.T,
+                 mask_attr_name: str = td.DEFAULT_ATTR_KEYS.MASK,
+                 bbox_attr_name: str = td.DEFAULT_ATTR_KEYS.BBOX,
+                 tracklet_id_attr_name: str = td.DEFAULT_ATTR_KEYS.TRACKLET_ID,
+                 termination_annotation_attr_name: str = "termination_annotation"
+                 ) -> None:
+        self.time_attr_name = time_attr_name
+        self.mask_attr_name = mask_attr_name
+        self.bbox_attr_name = bbox_attr_name
+        self.tracklet_id_attr_name = tracklet_id_attr_name
+        self.termination_annotation_attr_name = termination_annotation_attr_name
+        
         if self.tracklet_id_attr_name not in graph.node_attr_keys:
             raise ValueError(f"tracklet_id_column '{self.tracklet_id_attr_name}' not found in graph node attributes.")
         self.graph :td.graph.BaseGraph = graph
