@@ -112,10 +112,7 @@ class ConnectTrackAction(Action):
                     tracks.graph.add_edge(pred_id, succ_id, {})
         
         node_ids = [self.node_id1, self.node_id2, *successor_node_ids, *predecessor_node_ids]
-        successor_node_ids2 : dict[int, pl.DataFrame] = tracks.graph.successors(
-            node_ids=node_ids,
-            attr_keys=[td.DEFAULT_ATTR_KEYS.NODE_ID],
-        )
+        successor_node_ids2 : dict[int, pl.DataFrame] = tracks.graph.successors()
         successor_node_ids2_df : pl.DataFrame = pl.concat(list(successor_node_ids2.values()))
         if not successor_node_ids2_df.is_empty():
             node_ids.extend(

@@ -40,7 +40,7 @@ class _LayerConfig:
     visible_layers : list[str]
     active_layer : str 
 select_config = _LayerConfig(["cropped_image", "cropped_labels"], "cropped_labels")
-redraw_config = _LayerConfig(["redraw"],"redraw")
+redraw_config = _LayerConfig(["cropped_image", "redraw"],"redraw")
 
 LAYER_CONFIGS = { 
     ViewerState.SELECT_REGION: _LayerConfig(["image", "labels"], "labels"),
@@ -91,9 +91,14 @@ class StateMachineWidget(Container):
         self._viewer.bind_key("t", lambda event: self.t_typed(), overwrite=True)
         self._viewer.bind_key("n", lambda event: self.n_typed(), overwrite=True)
         self._viewer.bind_key("c", lambda event: self.c_typed(), overwrite=True)
-        
+
+    def __bind_mouse_events(self):
         self._viewer.mouse_drag_callbacks.append(self._track_clicked_wrapper)        
         self._labels_layer.mouse_drag_callbacks.append(self._region_clicked_wrapper)
+
+    def __unbind_mouse_events(self):
+        self._viewer.mouse_drag_callbacks.remove(self._track_clicked_wrapper)        
+        self._labels_layer.mouse_drag_callbacks.remove(self._region_clicked_wrapper)
 
     def __init__(self, 
                  viewer: Viewer, 
@@ -153,6 +158,7 @@ class StateMachineWidget(Container):
                                ignore_invalid_triggers=True)
         
         self.__bind_events()
+        self.__bind_mouse_events()
 
         #self.update_finalized_point_layer()
         self.update_viewer_status()  
@@ -183,9 +189,12 @@ class StateMachineWidget(Container):
             else:
                 self.set_selected_colormap()
 
-        if "redraw" in cfg.visible_layers:
+        if cfg.active_layer == "redraw":
             self._redraw_layer.selected_label = 1
             self._redraw_layer.mode = "paint"
+            self.__unbind_mouse_events()
+        else:
+            self.__bind_mouse_events()
             # XXX better if I can set the viewer.dims not to change
     
 #    def update_finalized_point_layer(self):
@@ -318,6 +327,14 @@ class StateMachineWidget(Container):
         track_frames = self._selected_track.frames
         return iT, min(track_frames), max(track_frames)
     
+    @log_error
+    def _get_mask_from_redraw_layer(self):
+        inds = np.nonzero(self._redraw_layer.data == 1)
+        min_y, min_x, max_y, max_x = inds[0].min(), inds[1].min(), inds[0].max(), inds[1].max()
+        mask_data = np.array(self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1)
+        mask = td.nodes.Mask(mask=mask_data, bbox=(min_y, min_x, max_y+1, max_x+1))
+        return mask
+    
     ################ Select tracks, finalize and abort edits ################
 
     @log_error    
@@ -347,13 +364,16 @@ class StateMachineWidget(Container):
 
     @log_error    
     def finalize_track(self):
+        assert self._selected_track is not None, "No selected track."
         logger.info("Track finalized")
-        self.verified_track_ids.add(int(self._selected_label))
-        for track_id in self.original_splits.get(int(self._selected_label), []):
-            logger.info(f"Previous daughter {track_id} removed from the candidate list")
-            self.candidate_track_ids.discard(int(track_id))
-        self.candidate_track_ids.discard(int(self._selected_label))
-        self.candidate_track_ids.update(map(int,set(self._daughters)-set(self.verified_track_ids)))
+        self.verified_track_ids.add(int(self._selected_track.track_id))
+        # XXX implement removal of previous daughters from candidate list
+#        for track_id in self.original_splits.get(int(self._selected_track.tra), []):
+#            logger.info(f"Previous daughter {track_id} removed from the candidate list")
+#            self.candidate_track_ids.discard(int(track_id))
+        self.candidate_track_ids.discard(int(self._selected_track.track_id))
+        self.candidate_track_ids.update(map(int,set(self._selected_track.daughter_track_ids)
+                                            -set(self.verified_track_ids)))
 
         ## XXX : Maybe in another thread? Make it sure that this happens surely independent of the main thread exit, and in the correct order.
         #self.ta.attrs["verified_track_ids"] = list(self.verified_track_ids)
@@ -381,10 +401,11 @@ class StateMachineWidget(Container):
     @log_error
     def prepare_redraw_layer(self):
         logger.info("Prepare redraw layer")
+        assert self._selected_track is not None, "No selected track."
         self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
         iT = self._viewer.dims.current_step[0]
-        cropped_label_frame = np.asarray(self._cropped_label[iT])
-        self._redraw_layer.data[self.window[1:]] = (cropped_label_frame == self._selected_label)
+        cropped_label_frame = np.asarray(self._gav[self.window][iT])
+        self._redraw_layer.data[self.window[1:]] = (cropped_label_frame == self._selected_track.track_id).astype(bool)
 
     @log_error
     def check_drawn_label(self):
@@ -417,11 +438,7 @@ class StateMachineWidget(Container):
             node_id = node_id[0]
             connected_node_id = None
         
-        inds = np.nonzero(self._redraw_layer.data == 1)
-        min_y, min_x, max_y, max_x = inds[0].min(), inds[1].min(), inds[0].max(), inds[1].max()
-        mask_data = np.array(self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1)
-        mask = td.nodes.Mask(mask=mask_data, bbox=(min_y, min_x, max_y+1, max_x+1))
-        
+        mask = self._get_mask_from_redraw_layer()
         if node_id is not None:
             #if ask_draw_label(self._viewer) == "new":
             # XXX Currently adding new mask without modifying the old one is not supported
@@ -452,6 +469,7 @@ class StateMachineWidget(Container):
     
     @log_error
     def switch_track(self, switch_target_label):
+        assert self._selected_track is not None, "No selected track."
         frame, frames_min, frames_max = self._get_frame_and_tracklet_frames_min_max()
         direction = choose_direction_by_mbox(self._viewer)
         if not direction:
@@ -462,27 +480,38 @@ class StateMachineWidget(Container):
                 logger.info("Cannot switch forward, since the track does not exist in the previous frame")
                 return
             logger.info("Switching forward")
-            self.ta.break_track(frame, self._selected_label, True, self.txn)
-            self.ta.break_track(frame, switch_target_label, True, self.txn, 
-                                new_trackid=self._selected_label)
+            node_id1 = self._selected_track.subgraph.filter(
+                        td.NodeAttr("t") == frame
+            ).node_ids()[0]
+            node_id2 = self._graph.filter(
+                        td.NodeAttr(self.tracklet_attr_name) == switch_target_label,
+                        td.NodeAttr("t") == frame+1
+            ).node_ids()[0]
         elif direction == "backward":
             if frame >= frames_max:
                 logger.info("Cannot switch backward, since the track does not exist in the next frame")
                 return
             logger.info("Switching backward")
-            self.ta.break_track(frame+1, self._selected_label, False, self.txn)
-            self.ta.break_track(frame+1, switch_target_label, False, self.txn, 
-                                new_trackid=self._selected_label)
-        self.ta.cleanup_single_daughter_splits()
-        self.update_daughters()
+            node_id2 = self._selected_track.subgraph.filter(
+                        td.NodeAttr("t") == frame
+            ).node_ids()[0]
+            node_id1 = self._graph.filter(
+                        td.NodeAttr(self.tracklet_attr_name) == switch_target_label,
+                        td.NodeAttr("t") == frame-1
+            ).node_ids()[0]
+        self._tracks.apply(
+            action.ConnectTrackAction(
+                node_id1=node_id1,
+                node_id2=node_id2
+            )
+        )
+        logger.info("Tracks switched")
 
     ################ Mark termination ################
     @log_error
     def mark_termination_enter_valid(self):
-        iT = self._viewer.dims.current_step[0]
-        track_bboxes_df = self.ta._get_track_bboxes(self._selected_label).reset_index()
-        frames = track_bboxes_df["frame"].values
-        is_valid =  (iT >= frames.min()) and (iT <= frames.max())
+        frame, frames_min, frames_max = self._get_frame_and_tracklet_frames_min_max()
+        is_valid =  (frame >= frames_min) and (frame <= frames_max)
         if not is_valid:
             logger.info("track does not exist in the current timeframe")
         return is_valid
@@ -502,10 +531,8 @@ class StateMachineWidget(Container):
     ################ Daughter selection ################
     @log_error
     def daughter_choose_mode_enter_valid(self):
-        iT = self._viewer.dims.current_step[0]
-        track_bboxes_df = self.ta._get_track_bboxes(self._selected_label).reset_index()
-        frames = track_bboxes_df["frame"].values
-        is_valid =  (iT >= frames.min()) and (iT <= frames.max()+1)
+        frame, frames_min, frames_max = self._get_frame_and_tracklet_frames_min_max()
+        is_valid =  (frame >= frames_min) and (frame <= frames_max+1)
         if not is_valid:
             logger.info("track does not exist in the current timeframe")
         return is_valid
@@ -534,27 +561,31 @@ class StateMachineWidget(Container):
     @log_error
     def daughter_select(self, frame, daughter_label):
         if frame == self._daughter_frame:
-            self._daughter_candidates.append(daughter_label)
+            node_id = self._graph.filter(
+                td.NodeAttr(self.tracklet_attr_name) == daughter_label,
+                td.NodeAttr("t") == frame
+            ).node_ids().to_list()
+            self._daughter_candidates.append(node_id[0])
+            logger.info("daughter selected.")
         else:
-            logger.info("frame not correct")
+            logger.info("frame not correct. daughter not selected.")
 
     @log_error
     def daughter_draw_finish(self):
-        iT = self._viewer.dims.current_step[0]
+        frame = self._viewer.dims.current_step[0]
         logger.info("label redraw finish")
-        inds = np.nonzero(self._redraw_layer.data == 1)
-        min_y, min_x, max_y, max_x = inds[0].min(), inds[1].min(), inds[0].max(), inds[1].max()
-        mask = self._redraw_layer.data[min_y:max_y+1, min_x:max_x+1] == 1
-        safe_label = self.ta._get_safe_track_id()
+        mask = self._get_mask_from_redraw_layer()
         logger.info("add mask")
-        self.ta.add_mask(iT, safe_label, (min_y, min_x), mask, self.txn)
-        self._daughter_candidates.append(safe_label)
+        self._daughter_candidates.append((frame, mask))
 
     @log_error
     def finalize_daughter(self):
+        assert self._selected_track is not None, "No selected track."
         assert len(self._daughter_candidates) == 2
-        self.ta.add_split(self._daughter_frame,
-                          self._selected_label, 
-                          self._daughter_candidates, 
-                          self.txn)
-        self.update_daughters()
+        logger.info("finalize daughter")
+        self._tracks.apply(
+            action.AnnotateDaughterAction(
+                node_id=self._selected_track.track_id,
+                daughters=self._daughter_candidates
+            )
+        self._update_daughters()
