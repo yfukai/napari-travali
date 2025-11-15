@@ -19,13 +19,15 @@ def find_track_by_coordinates(
     return track_id
 
 @log_error
-def find_track_successors(graph, track_id) -> tuple[int, pl.DataFrame]:
+def find_track_successors(graph, track_id, track_id_attr_key) -> tuple[int, pl.DataFrame]:
     # TODO make the following faster
-    sorted_node_ids = graph.filter(td.NodeAttr("label") == track_id).node_attrs(attr_keys=["node_id","t"]).sort("t")["node_id"]
-    logger.debug("sorted_node_ids built.")
+    df = graph.filter(td.NodeAttr(track_id_attr_key) == track_id).node_attrs(attr_keys=["node_id","t"]).sort("t")
+    sorted_node_ids = df["node_id"]
+    logger.debug(f"{df=}")
     last_node_id = sorted_node_ids.last()
+    logger.debug(f"Sorted_node_ids built. Last node id: {last_node_id}. track_id: {track_id}, track_id_attr_key: {track_id_attr_key}")
     #successors_df = graph.successors(last_node_id, return_attrs=True, attr_keys=["track_id"])
-    successors_df = graph.successors(last_node_id, attr_keys=["label"], return_attrs=True)
+    successors_df = graph.successors(last_node_id, attr_keys=[track_id_attr_key], return_attrs=True)
     logger.debug("successors_df built.")
     return successors_df
 

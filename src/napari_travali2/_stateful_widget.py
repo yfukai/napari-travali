@@ -55,11 +55,27 @@ LAYER_CONFIGS = {
 
 @dataclass
 class _SelectedTrackInfo:
+    graph: td.graph.BaseGraph
+    tracklet_id_attr_name: str
     track_id: int
-    subgraph: td.graph.BaseGraph
-    frames: list[int]
-    daughter_track_ids: list[int]
+    def __post_init__(self):
+        self.subgraph: td.graph.BaseGraph = self.graph.filter(
+            td.NodeAttr(self.tracklet_id_attr_name) == self.track_id
+        ).subgraph()
+        self.frames: list[int] = self.subgraph.node_attrs(attr_keys=["t"])["t"].to_list()
+        self.update_daughters()
     
+    def update_daughters(self):
+        logger.info(f"Updating daughters for track ID: {self.track_id}")
+        successors_df = find_track_successors(self.graph, self.track_id,
+                                              self.tracklet_id_attr_name)
+        if len(successors_df) == 0:
+            logger.info("No successors found.")
+            successor_track_ids = []
+        else:
+            successor_track_ids = successors_df[self.tracklet_id_attr_name].to_list()
+        logger.info(f"Successor track IDs: {successor_track_ids}")
+        self.daughter_track_ids = successor_track_ids
 
 class StateMachineWidget(Container):
 
@@ -112,7 +128,7 @@ class StateMachineWidget(Container):
                  verified_track_ids=set(),
                  candidate_track_ids=set(),
                  crop_size=1024,
-                 tracklet_attr_name="label",
+                 tracklet_id_attr_name="label",
                  *,
                  gav = None
                  ):
@@ -126,11 +142,11 @@ class StateMachineWidget(Container):
         else:
             self._gav = td.array.GraphArrayView(tracks.graph, 
                                                 shape=tuple(image.shape), 
-                                                attr_key=tracklet_attr_name)
+                                                attr_key=tracklet_id_attr_name)
         self._image_layer = viewer.add_image([image, image[::2,::2]], name="Image")
         self._labels_layer = viewer.add_labels([self._gav, self._gav[::2,::2]], name="Labels")
         self.crop_size = crop_size
-        self.tracklet_attr_name = tracklet_attr_name
+        self.tracklet_id_attr_name = tracklet_id_attr_name
         self.verified_track_ids = set(map(int,verified_track_ids))
         self.candidate_track_ids = set(map(int,candidate_track_ids))
         self._selected_track: _SelectedTrackInfo|None = None
@@ -313,20 +329,6 @@ class StateMachineWidget(Container):
 
     ################ Common utilities ################
     @log_error
-    def _update_daughters(self):
-        assert self._selected_track is not None, "No selected track."
-        track_id = self._selected_track.track_id
-        logger.info(f"Updating daughters for track ID: {track_id}")
-        successors_df = find_track_successors(self._tracks.graph, track_id)
-        if len(successors_df) == 0:
-            logger.info("No successors found.")
-            successor_track_ids = []
-        else:
-            successor_track_ids = successors_df[self.tracklet_attr_name].to_list()
-        logger.info(f"Successor track IDs: {successor_track_ids}")
-        self._selected_track.daughter_track_ids = successor_track_ids
-
-    @log_error
     def _get_frame_and_tracklet_frames_min_max(self):
         assert self._selected_track is not None, "No selected track."
         iT = self._viewer.dims.current_step[0]
@@ -341,22 +343,28 @@ class StateMachineWidget(Container):
         mask = td.nodes.Mask(mask=mask_data, bbox=(min_y, min_x, max_y+1, max_x+1))
         return mask
     
+    @log_error
+    def _reselect_from_node_id(self, node_id):
+        new_track_id = self._tracks.graph.filter(
+            node_ids=[node_id]
+        ).node_attrs(attr_keys=[self.tracklet_id_attr_name])[self.tracklet_id_attr_name].to_list()[0]
+            
+        self._selected_track = _SelectedTrackInfo(
+            graph=self._tracks.graph,
+            track_id=new_track_id,
+            tracklet_id_attr_name=self.tracklet_id_attr_name
+        )
+    
     ################ Select tracks, finalize and abort edits ################
 
     @log_error    
     def select_track(self, track_id):
         logger.info(f"Selecting track ID: {track_id}")
-        subgraph = self._tracks.graph.filter(
-            td.NodeAttr(self.tracklet_attr_name) == track_id
-        ).subgraph()
-        logger.info("Subgraph extracted.")
         self._selected_track = _SelectedTrackInfo(
+            graph=self._tracks.graph,
             track_id=track_id,
-            subgraph=subgraph,
-            frames=subgraph.node_attrs(attr_keys=["t"])["t"].to_list(),
-            daughter_track_ids=[],
+            tracklet_id_attr_name=self.tracklet_id_attr_name
         )
-        self._update_daughters()
         logger.info(f"Track ID: {track_id}, Successor IDs: {self._selected_track.daughter_track_ids}")
         self._cropped_labels_layer.selected_label = track_id
 
@@ -424,12 +432,12 @@ class StateMachineWidget(Container):
         iT = self._viewer.dims.current_step[0]
         node_id = self._selected_track.subgraph.filter(
             td.NodeAttr("t") == iT
-        ).node_attrs(attr_keys=["node_id"])["node_id"].to_list()
+        ).node_ids()
         if len(node_id) == 0:
             node_id = None
             connected_node_ids = self._selected_track.subgraph.filter(
                 td.NodeAttr("t") == (iT - 1 if iT > min(self._selected_track.frames) else iT + 1)
-            ).node_attrs(attr_keys=["node_id"])["node_id"].to_list()
+            ).node_ids()
             if len(connected_node_ids) == 0:
                 logger.error("No connected node found at the adjacent frame.")
                 connected_node_id = None
@@ -487,30 +495,33 @@ class StateMachineWidget(Container):
                 return
             logger.info("Switching forward")
             node_id1 = self._selected_track.subgraph.filter(
-                        td.NodeAttr("t") == frame
+                td.NodeAttr("t") == frame-1
             ).node_ids()[0]
-            node_id2 = self._graph.filter(
-                        td.NodeAttr(self.tracklet_attr_name) == switch_target_label,
-                        td.NodeAttr("t") == frame+1
+            node_id2 = self._tracks.graph.filter(
+                td.NodeAttr(self.tracklet_id_attr_name) == switch_target_label,
+                td.NodeAttr("t") == frame
             ).node_ids()[0]
+            track_node_id = node_id1
         elif direction == "backward":
             if frame >= frames_max:
                 logger.info("Cannot switch backward, since the track does not exist in the next frame")
                 return
             logger.info("Switching backward")
             node_id2 = self._selected_track.subgraph.filter(
+                        td.NodeAttr("t") == frame+1
+            ).node_ids()[0]
+            node_id1 = self._tracks.graph.filter(
+                        td.NodeAttr(self.tracklet_id_attr_name) == switch_target_label,
                         td.NodeAttr("t") == frame
             ).node_ids()[0]
-            node_id1 = self._graph.filter(
-                        td.NodeAttr(self.tracklet_attr_name) == switch_target_label,
-                        td.NodeAttr("t") == frame-1
-            ).node_ids()[0]
+            track_node_id = node_id2
         self._tracks.apply(
             action.ConnectTrackAction(
                 node_id1=node_id1,
                 node_id2=node_id2
             )
         )
+        self._reselect_from_node_id(track_node_id)
         logger.info("Tracks switched")
 
     ################ Mark termination ################
@@ -565,12 +576,14 @@ class StateMachineWidget(Container):
                 self.to_LABEL_SELECTED()
 
     @log_error
-    def daughter_select(self, frame, daughter_label):
+    def daughter_select(self, daughter_label):
+        frame = self._viewer.dims.current_step[0]
+        logger.info(f"Selecting daughter at frame {frame} with label {daughter_label}")
         if frame == self._daughter_frame:
-            node_id = self._graph.filter(
-                td.NodeAttr(self.tracklet_attr_name) == daughter_label,
+            node_id = self._tracks.graph.filter(
+                td.NodeAttr(self.tracklet_id_attr_name) == daughter_label,
                 td.NodeAttr("t") == frame
-            ).node_ids().to_list()
+            ).node_ids()
             self._daughter_candidates.append(node_id[0])
             logger.info("daughter selected.")
         else:
@@ -589,10 +602,16 @@ class StateMachineWidget(Container):
         assert self._selected_track is not None, "No selected track."
         assert len(self._daughter_candidates) == 2
         logger.info("finalize daughter")
+        node_id = self._selected_track.subgraph.filter(
+            td.NodeAttr("t") == self._viewer.dims.current_step[0] - 1
+        ).node_ids()[0]
+        logger.info(f"parent node id: {node_id}")
         self._tracks.apply(
             action.AnnotateDaughterAction(
-                node_id=self._selected_track.track_id,
+                node_id=node_id,
                 daughters=self._daughter_candidates
             )
         )
-        self._update_daughters()
+        self._reselect_from_node_id(node_id)
+        logger.info("daughters finalized.")
+        

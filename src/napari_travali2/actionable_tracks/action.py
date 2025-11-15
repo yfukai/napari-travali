@@ -9,6 +9,7 @@ import polars as pl
 import tracksdata as td
 
 from . import utils
+from .._logging import logger
 
 if TYPE_CHECKING:
     from .actionable_tracks import ActionableTracks
@@ -131,12 +132,14 @@ class AnnotateDaughterAction(Action):
         successor_node_ids = utils.remove_successor_edges(tracks.graph, self.node_id)
         daughter_node_ids = []
         relevant_node_ids = []
+        logger.debug(f"Annotating daughters for node {self.node_id}.")
         for daughter in self.daughters:
             if isinstance(daughter, int):
                 relevant_node_ids.extend(
                     utils.remove_predecessor_edges(tracks.graph, daughter)
                 )
                 daughter_node_ids.append(daughter)
+                logger.debug(f"Connecting existing daughter node {daughter}.")
                 tracks.graph.add_edge(self.node_id, daughter, {})
             elif isinstance(daughter, tuple):
                 frame, mask = daughter
@@ -150,6 +153,7 @@ class AnnotateDaughterAction(Action):
                     }
                 )
                 daughter_node_ids.append(new_node_id)
+                logger.debug(f"Creating new daughter node {new_node_id} at frame {frame}.")
                 tracks.graph.add_edge(self.node_id, new_node_id, {})
         tracks.assign_tracklet_ids(
             [self.node_id, *daughter_node_ids, *successor_node_ids],
