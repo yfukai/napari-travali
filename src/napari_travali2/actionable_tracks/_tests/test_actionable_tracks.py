@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from copy import deepcopy
 import tracksdata as td
 
 from napari_travali2.actionable_tracks.action import (
@@ -78,8 +77,7 @@ def _assert_graphs_isomorphic(
         assert False
     assert edge_df1.equals(edge_df2)
 
-@pytest.fixture(params=["inmem", "sql"], ids=["inmem", "sql"])
-def sample_graph(request):
+def _make_sample_graph(graph_type):
     """ Create a sample tracks graph for testing.
 
     Graph:
@@ -89,7 +87,7 @@ def sample_graph(request):
 
     """
 
-    graph = _make_empty_graph(request.param)
+    graph = _make_empty_graph(graph_type)
 
     # Build graph components
     # A chain
@@ -142,8 +140,9 @@ def test_assign_tracklet_ids_assigns_consistent_ids(graph_type):
     assert tracks.safe_tracklet_id >= 2
 
 
-def test_redraw_mask_action_overwrites_mask_and_bbox(sample_graph):
-    graph, nodes_dict = sample_graph
+@pytest.mark.parametrize("graph_type", ["inmem", "sql"])
+def test_redraw_mask_action_overwrites_mask_and_bbox(graph_type):
+    graph, nodes_dict = _make_sample_graph(graph_type)
     tracks = ActionableTracks(graph)
 
     node_id = nodes_dict["A"][1]
@@ -207,8 +206,9 @@ def _compare_tracklet_id_assignments(expected_node_sets, graph_backend: td.graph
          [[["A0", "A1", "A2", "A3"], ["B0", "B1", "B2", "B3"], ["C0", "B4", "B5"]],
           [["A0", "A1", "A2", "A3"], ["B0", "B1", "B2", "B3"], ["C0", "B4", "B5"]]]),
     ])
-def test_connect_track_action_links_nodes_and_reconnects_successors(sample_graph, reconnect_others, test_param):
-    graph, nodes_dict = sample_graph
+@pytest.mark.parametrize("graph_type", ["inmem", "sql"])
+def test_connect_track_action_links_nodes_and_reconnects_successors(graph_type, reconnect_others, test_param):
+    graph, nodes_dict = _make_sample_graph(graph_type)
     def _map_node_name_to_id(name: str) -> int:
         return nodes_dict[name[0]][int(name[1])]
     node_id1 = _map_node_name_to_id(test_param[0])
@@ -223,7 +223,7 @@ def test_connect_track_action_links_nodes_and_reconnects_successors(sample_graph
     ]
     tracklet_node_sets = [[[_map_node_name_to_id(name) for name in group1] for group1 in group] for group in test_param[4]]
     
-    target_graph, _ = sample_graph
+    target_graph, _ = _make_sample_graph(graph_type)
     tracks = ActionableTracks(graph)
     tracks.assign_tracklet_ids()
     action = ConnectTrackAction(
@@ -265,8 +265,9 @@ def test_connect_track_action_validates_time_ordering(graph_type):
         action.apply(tracks)
 
 
-def test_annotate_daughter_action_reuses_and_creates_nodes(sample_graph):
-    graph, nodes_dict = sample_graph
+@pytest.mark.parametrize("graph_type", ["inmem", "sql"])    
+def test_annotate_daughter_action_reuses_and_creates_nodes(graph_type):
+    graph, nodes_dict = _make_sample_graph(graph_type)
     
     A0, A1, A2, A3 = nodes_dict["A"]
     B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
@@ -275,7 +276,7 @@ def test_annotate_daughter_action_reuses_and_creates_nodes(sample_graph):
     parent = B1
     existing = A2
     new_mask = _make_mask(offset=4)
-    tracks = ActionableTracks(deepcopy(graph))
+    tracks = ActionableTracks(graph)
     tracks.assign_tracklet_ids()
     action = AnnotateDaughterAction(
         node_id=B1,
@@ -308,7 +309,7 @@ def test_annotate_daughter_action_reuses_and_creates_nodes(sample_graph):
         tracks.graph,
     )
 
-    target_graph = deepcopy(graph)
+    target_graph, _ = _make_sample_graph(graph_type)
     target_graph.add_edge(parent, existing, {})
     target_graph.remove_edge(A1, A2)
     new_node_id_target = target_graph.add_node(
@@ -326,8 +327,9 @@ def test_annotate_daughter_action_reuses_and_creates_nodes(sample_graph):
     _assert_graphs_isomorphic(tracks.graph, target_graph)
 
 
-def test_merge_labels_action_unifies_masks_and_removes_source_node(sample_graph):
-    graph, nodes_dict = sample_graph
+@pytest.mark.parametrize("graph_type", ["inmem", "sql"])
+def test_merge_labels_action_unifies_masks_and_removes_source_node(graph_type):
+    graph, nodes_dict = _make_sample_graph(graph_type)
 
     A0, A1, A2, A3 = nodes_dict["A"]
     B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
@@ -363,56 +365,68 @@ def test_merge_labels_action_unifies_masks_and_removes_source_node(sample_graph)
         tracks.graph,
     )
 
-
-@pytest.mark.parametrize("delete_successor_tracklet", [False, True])
+@pytest.mark.parametrize(
+    "node_name, delete_successor_tracklet, expected_remaining_node_names, expected_groups_names",
+    [
+        (
+            "B1",
+            True,
+            {"A0", "A1", "A2", "A3", "B0", "B1", "B2", "B3", "B4", "B5", "C0"},
+            [["A0", "A1", "A2", "A3"], ["B0", "B1"], ["B2", "B3"], ["B4", "B5"], ["C0"]],
+        ),
+        (
+            "B1",
+            False,
+            {"A0", "A1", "A2", "A3", "B0", "B1", "B2", "B3", "B4", "B5", "C0"},
+            [["A0", "A1", "A2", "A3"], ["B0", "B1"], ["B2", "B3"], ["B4", "B5"], ["C0"]],
+        ),
+        (
+            "B2",
+            True,
+            {"A0", "A1", "A2", "A3", "B0", "B1", "B2", "B4", "B5", "C0"},
+            [["A0", "A1", "A2", "A3"], ["B0", "B1"], ["B2"], ["B4", "B5"], ["C0"]],
+        ),
+        (
+            "B2",
+            False,
+            {"A0", "A1", "A2", "A3", "B0", "B1", "B2", "B3", "B4", "B5", "C0"},
+            [["A0", "A1", "A2", "A3"], ["B0", "B1"], ["B2"], ["B3"], ["B4", "B5"], ["C0"]],
+        ),
+    ],
+)
+@pytest.mark.parametrize("graph_type", ["inmem", "sql"])
 def test_annotate_termination_action_updates_annotation_and_handles_successors(
-    sample_graph, delete_successor_tracklet: bool
+    node_name, delete_successor_tracklet, expected_remaining_node_names, expected_groups_names, 
+    graph_type
 ):
-    graph, nodes_dict = sample_graph
-    A0, A1, A2, A3 = nodes_dict["A"]
-    B0, B1, B2, B3, B4, B5 = nodes_dict["B"]
-    C1, = nodes_dict["C"]
+    graph, nodes_dict = _make_sample_graph(graph_type)
+    def _map_node_name_to_id(name: str) -> int:
+        return nodes_dict[name[0]][int(name[1])]
+    node_id = _map_node_name_to_id(node_name)
+    expected_remaining_node_ids = {_map_node_name_to_id(name) for name in expected_remaining_node_names}
+    expected_groups = [
+        [_map_node_name_to_id(name) for name in group]
+        for group in expected_groups_names
+    ]
+    
+    tracks = ActionableTracks(graph)
+    tracks.assign_tracklet_ids()
 
-    for node_id, expected_remaining_node_ids, expected_groups in [
-        (
-            B1,
-            { True: {A0, A1, A2, A3, B0, B1, B2, B3, B4, B5, C1},
-              False: {A0, A1, A2, A3, B0, B1, B2, B3, B4, B5, C1},
-            }[delete_successor_tracklet],
-            { 
-             True:  [[A0, A1, A2, A3],[B0, B1],[B2, B3],[B4, B5],[C1]],
-             False: [[A0, A1, A2, A3],[B0, B1],[B2, B3],[B4, B5],[C1]],
-            }[delete_successor_tracklet],
-        ),
-        (
-            B2,
-            { True: {A0, A1, A2, A3, B0, B1, B2, B4, B5, C1},
-              False: {A0, A1, A2, A3, B0, B1, B2, B3, B4, B5, C1},
-            }[delete_successor_tracklet],
-            { 
-             True:  [[A0, A1, A2, A3],[B0, B1],[B2],[B4, B5],[C1]],
-             False: [[A0, A1, A2, A3],[B0, B1],[B2], [B3],[B4, B5],[C1]],
-            }[delete_successor_tracklet],
-        ),
-    ]:
-        tracks = ActionableTracks(deepcopy(graph))
-        tracks.assign_tracklet_ids()
+    action = AnnotateTerminationAction(
+        node_id=node_id,
+        termination_annotation="finished",
+        delete_successor_tracklet=delete_successor_tracklet,
+    )
+    action.apply(tracks)
 
-        action = AnnotateTerminationAction(
-            node_id=node_id,
-            termination_annotation="finished",
-            delete_successor_tracklet=delete_successor_tracklet,
-        )
-        action.apply(tracks)
+    attrs = tracks.graph.filter(node_ids=[node_id]).node_attrs(
+        attr_keys=[tracks.termination_annotation_attr_name]
+    )
+    assert attrs[tracks.termination_annotation_attr_name][0] == "finished"
+    assert len(tracks.graph.successors(node_id)) == 0
 
-        attrs = tracks.graph.filter(node_ids=[node_id]).node_attrs(
-            attr_keys=[tracks.termination_annotation_attr_name]
-        )
-        assert attrs[tracks.termination_annotation_attr_name][0] == "finished"
-        assert tracks.graph.successors(node_id).is_empty()
+    remaining_node_ids = set(tracks.graph.node_ids())
+    assert remaining_node_ids == expected_remaining_node_ids
 
-        remaining_node_ids = set(tracks.graph.node_ids())
-        assert remaining_node_ids == expected_remaining_node_ids
-
-        _compare_tracklet_id_assignments(expected_groups, tracks.graph)
+    _compare_tracklet_id_assignments(expected_groups, tracks.graph)
 

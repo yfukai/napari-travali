@@ -6,10 +6,9 @@ def _remove_connected_edges(graph, node_id, direction: str):
     if direction not in ['predecessors', 'successors']:
         raise ValueError(f"Invalid direction '{direction}'. Must be 'predecessors' or 'successors'.")
     if direction == 'predecessors':
-        neighbors : pl.DataFrame = graph.predecessors(node_id)
+        neighbor_node_ids = graph.predecessors(node_id)
     elif direction == 'successors':
-        neighbors : pl.DataFrame = graph.successors(node_id)
-    neighbor_node_ids = neighbors[td.DEFAULT_ATTR_KEYS.NODE_ID] if len(neighbors) > 0 else []
+        neighbor_node_ids = graph.successors(node_id)
     for neighbor_node_id in neighbor_node_ids:
         if direction == 'predecessors':
             graph.remove_edge(neighbor_node_id, node_id)

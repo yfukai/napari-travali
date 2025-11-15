@@ -25,7 +25,7 @@ def find_track_successors(graph, track_id) -> tuple[int, pl.DataFrame]:
     logger.debug("sorted_node_ids built.")
     last_node_id = sorted_node_ids.last()
     #successors_df = graph.successors(last_node_id, return_attrs=True, attr_keys=["track_id"])
-    successors_df = graph.successors(last_node_id, attr_keys=["label"])
+    successors_df = graph.successors(last_node_id, attr_keys=["label"], return_attrs=True)
     logger.debug("successors_df built.")
     return successors_df
 

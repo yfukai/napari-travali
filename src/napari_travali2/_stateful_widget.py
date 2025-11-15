@@ -82,6 +82,11 @@ class StateMachineWidget(Container):
             np.zeros(self.space_like_shape, dtype=bool), 
             name="Redraw", cache=False)
 
+    def __refresh_labels(self):
+        self._gav._cache._store.clear() # Should be removed after fixing tracksdata cache update issue
+        self._labels_layer.refresh()
+        self._cropped_labels_layer.refresh()
+
     def __bind_events(self):
         # XXX possibly refactor this
         self._viewer.bind_key("o", lambda event: self.o_typed(), overwrite=True)
@@ -168,6 +173,7 @@ class StateMachineWidget(Container):
        
     @log_error    
     def update_viewer_status(self,*_args):
+        self.__refresh_labels()
         self._state_label.value = ("========================\n"
                                   f"Current State: {self.state.name}\n"
                                   "========================\n"
@@ -588,4 +594,5 @@ class StateMachineWidget(Container):
                 node_id=self._selected_track.track_id,
                 daughters=self._daughter_candidates
             )
+        )
         self._update_daughters()
