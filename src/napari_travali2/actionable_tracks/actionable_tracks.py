@@ -12,13 +12,20 @@ class ActionableTracks:
                  mask_attr_name: str = td.DEFAULT_ATTR_KEYS.MASK,
                  bbox_attr_name: str = td.DEFAULT_ATTR_KEYS.BBOX,
                  tracklet_id_attr_name: str = td.DEFAULT_ATTR_KEYS.TRACKLET_ID,
-                 termination_annotation_attr_name: str = "termination_annotation"
+                 termination_annotation_attr_name: str = "termination_annotation",
+                 verified_attr_name: str = "verified"
                  ) -> None:
         self.time_attr_name = time_attr_name
         self.mask_attr_name = mask_attr_name
         self.bbox_attr_name = bbox_attr_name
         self.tracklet_id_attr_name = tracklet_id_attr_name
         self.termination_annotation_attr_name = termination_annotation_attr_name
+        self.verified_attr_name = verified_attr_name
+        
+        if self.termination_annotation_attr_name not in graph.node_attr_keys:
+            graph.add_node_attr_key(self.termination_annotation_attr_name, None)
+        if self.verified_attr_name not in graph.node_attr_keys:
+            graph.add_node_attr_key(self.verified_attr_name, False)
         
         if self.tracklet_id_attr_name not in graph.node_attr_keys:
             raise ValueError(f"tracklet_id_column '{self.tracklet_id_attr_name}' not found in graph node attributes.")

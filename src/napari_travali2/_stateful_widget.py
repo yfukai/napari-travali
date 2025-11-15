@@ -368,26 +368,21 @@ class StateMachineWidget(Container):
         logger.info(f"Track ID: {track_id}, Successor IDs: {self._selected_track.daughter_track_ids}")
         self._cropped_labels_layer.selected_label = track_id
 
-    @log_error
-    def _write_verified_and_candidates(self):
-        logger.info("Writing properties")
-        self.ta.attrs["verified_track_ids"] = list(self.verified_track_ids)
-        self.ta.attrs["candidate_track_ids"] = list(self.candidate_track_ids)
-        self.ta.write_properties()
-        logger.info("Properties written")
-
     @log_error    
     def finalize_track(self):
         assert self._selected_track is not None, "No selected track."
         logger.info("Track finalized")
-        self.verified_track_ids.add(int(self._selected_track.track_id))
+        self._selected_track.subgraph.update_node_attrs(attrs={
+            "verified":True
+        })
+        #self.verified_track_ids.add(int(self._selected_track.track_id))
         # XXX implement removal of previous daughters from candidate list
 #        for track_id in self.original_splits.get(int(self._selected_track.tra), []):
 #            logger.info(f"Previous daughter {track_id} removed from the candidate list")
 #            self.candidate_track_ids.discard(int(track_id))
-        self.candidate_track_ids.discard(int(self._selected_track.track_id))
-        self.candidate_track_ids.update(map(int,set(self._selected_track.daughter_track_ids)
-                                            -set(self.verified_track_ids)))
+        #self.candidate_track_ids.discard(int(self._selected_track.track_id))
+        #self.candidate_track_ids.update(map(int,set(self._selected_track.daughter_track_ids)
+        #                                    -set(self.verified_track_ids)))
 
         ## XXX : Maybe in another thread? Make it sure that this happens surely independent of the main thread exit, and in the correct order.
         #self.ta.attrs["verified_track_ids"] = list(self.verified_track_ids)
@@ -535,13 +530,23 @@ class StateMachineWidget(Container):
     
     @log_error
     def mark_termination(self):
+        assert self._selected_track is not None
         iT = self._viewer.dims.current_step[0]
+        node_id = self._selected_track.subgraph.filter(
+            td.NodeAttr("t") == iT
+        ).node_ids()[0]
         annotation, res = get_annotation_of_track_end(
-            self._viewer, self.ta.termination_annotations.get(self._selected_label, "")
+            self._viewer, ""
         )
         if res:
-            self.ta.terminate_track(iT, self._selected_label, annotation, self.txn)
-            self.update_daughters()
+            self._tracks.apply(
+                action.AnnotateTerminationAction(
+                    node_id=node_id,
+                    termination_annotation=annotation,
+                    delete_successor_tracklet=False #TODO ask this to user
+                )
+            )
+            self._reselect_from_node_id(node_id)
         else:
             logger.info("Mark termination cancelled")
 
