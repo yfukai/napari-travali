@@ -22,7 +22,7 @@ napari = {extras = ["pyqt5"], version = "^0.6.6"}
 transitions = "^0.9.2"
 numba = "^0.61.0"
 numpy = "<2.2"
-tracksdata = {git = "https://github.com/yfukai/tracksdata", rev = "mask_union_mask", extras = ["spatial"]}
+tracksdata = {git = "https://github.com/yfukai/tracksdata", rev = "fix_sqlgraph_attr", extras = ["spatial"]}
 
 [tool.poetry.dev-dependencies]
 Pygments = ">=2.10.0"
