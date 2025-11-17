@@ -40,6 +40,7 @@ class AddNodeAction(Action):
 
     def apply(self, tracks: ActionableTracks):
         """Add a new node with the specified frame and mask."""
+        # TODO calculate regionprops and other attributes
         new_node_id = tracks.graph.add_node(
             attrs={
                 tracks.mask_attr_name: self.mask,
@@ -74,6 +75,7 @@ class RedrawMaskAction(Action):
             tracks.mask_attr_name
         ].first()
         tracks.graph.update_node_attrs(
+        # TODO calculate regionprops and other attributes
             attrs={
                 tracks.mask_attr_name: [self.new_mask],
                 tracks.bbox_attr_name: [self.new_mask.bbox],
@@ -150,6 +152,7 @@ class AnnotateDaughterAction(Action):
                         tracks.time_attr_name: frame,
                         tracks.tracklet_id_attr_name: -1,
                         tracks.termination_annotation_attr_name: "",
+                        tracks.verified_attr_name: False,
                     }
                 )
                 daughter_node_ids.append(new_node_id)
