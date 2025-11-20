@@ -16,15 +16,15 @@ classifiers = [
 Changelog = "https://github.com/yfukai/napari-travali2/releases"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 click = ">=8.0.1"
-napari = {extras = ["pyqt5"], version = "^0.6.6"}
+napari = {extras = ["pyqt6"], version = "^0.6.6"}
 transitions = "^0.9.2"
 numba = "^0.61.0"
-numpy = "<2.2"
-tracksdata = {git = "https://github.com/yfukai/tracksdata", rev = "fix_sqlgraph_attr", extras = ["spatial"]}
+numpy = "^2.2"
+tracksdata = {git = "https://github.com/yfukai/tracksdata", rev = "main", extras = ["spatial"]}
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 Pygments = ">=2.10.0"
 black = ">=21.10b0"
 coverage = {extras = ["toml"], version = ">=6.2"}

@@ -40,20 +40,30 @@ class AddNodeAction(Action):
 
     def apply(self, tracks: ActionableTracks):
         """Add a new node with the specified frame and mask."""
-        # TODO calculate regionprops and other attributes
-        new_node_id = tracks.graph.add_node(
-            attrs={
-                tracks.mask_attr_name: self.mask,
-                tracks.bbox_attr_name: self.mask.bbox,
-                tracks.time_attr_name: self.frame,
-                tracks.tracklet_id_attr_name: -1,
-                tracks.termination_annotation_attr_name: "",
-            }
-        )
+        node_attr_keys = tracks.graph.node_attr_keys
+        centroid_attr_keys = ["z","y","x"][-self.mask.mask.ndim:]
+
+        attrs = {
+            tracks.mask_attr_name: self.mask,
+            tracks.bbox_attr_name: self.mask.bbox,
+            tracks.time_attr_name: self.frame,
+            tracks.tracklet_id_attr_name: -1,
+            tracks.termination_annotation_attr_name: "",
+        }
+        props = self.mask.regionprops
+        for key, val in zip(centroid_attr_keys, props.centroid):
+            attrs[key] = val
+        for node_attr_key in node_attr_keys:
+            if node_attr_key not in attrs:
+                attrs[node_attr_key] = getattr(props, node_attr_key, None)
+
+        new_node_id = tracks.graph.add_node(attrs=attrs)
         if self.connected_node_id is not None:
             times = utils.get_times(
                 tracks.graph, [self.connected_node_id, new_node_id]
             )
+            if times[self.connected_node_id] == times[new_node_id]:
+                raise ValueError("Cannot connect nodes with the same time.")
             if times[self.connected_node_id] < times[new_node_id]:
                 tracks.graph.add_edge(self.connected_node_id, new_node_id, {})
             else:

@@ -5,12 +5,20 @@ from ._consts import LOGGING_PATH
 import os
 from os import path
 
-logging_path = path.join(path.expanduser("~"),LOGGING_PATH)
+logging_path = path.join(path.expanduser("~"), LOGGING_PATH)
 os.makedirs(path.dirname(logging_path), exist_ok=True)
 
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.FileHandler(logging_path))
-logger.propagate = True
+handler = logging.FileHandler(logging_path)
+formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+handler.setFormatter(formatter)
+handler.setLevel(logging.ERROR)
+logger.addHandler(handler)
+logger.setLevel(logging.ERROR)
+logger.propagate = False
 
 
 def log_error(func):
