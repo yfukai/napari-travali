@@ -15,9 +15,9 @@ formatter = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 handler.setFormatter(formatter)
-handler.setLevel(logging.ERROR)
+handler.setLevel(logging.DEBUG)
 logger.addHandler(handler)
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
 

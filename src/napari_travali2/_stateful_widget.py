@@ -59,12 +59,15 @@ class _SelectedTrackInfo:
     tracklet_id_attr_name: str
     track_id: int
     def __post_init__(self):
+        self.refresh()
+   
+    def refresh(self):
         self.subgraph: td.graph.BaseGraph = self.graph.filter(
             td.NodeAttr(self.tracklet_id_attr_name) == self.track_id
         ).subgraph()
         self.frames: list[int] = self.subgraph.node_attrs(attr_keys=["t"])["t"].to_list()
         self.update_daughters()
-    
+ 
     def update_daughters(self):
         logger.info(f"Updating daughters for track ID: {self.track_id}")
         successors_df = find_track_successors(self.graph, self.track_id,
@@ -464,8 +467,10 @@ class StateMachineWidget(Container):
                 action.AddNodeAction(
                     frame=iT,
                     mask=mask,
-                    connected_node_id=connected_node_id
+                    connected_node_id=connected_node_id,
+                    tracklet_id=self._selected_track.track_id
             ))
+            self._selected_track.refresh()
         
     ################ Switch tracks ################
     @log_error

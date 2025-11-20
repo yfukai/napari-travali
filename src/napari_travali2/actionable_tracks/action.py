@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
@@ -29,34 +29,45 @@ class Action(abc.ABC):
         raise NotImplementedError("Subclasses must implement this method.")
 
 
+def _get_mask_attrs(*, mask: td.nodes.Mask, 
+                    node_attr_keys: list[str], 
+                    tracks: ActionableTracks,  
+                    frame: int | None = None,) -> dict[str, Any]:
+    centroid_attr_keys = ["z","y","x"][-mask.mask.ndim:]
+
+    attrs = {
+        tracks.mask_attr_name: mask,
+        tracks.bbox_attr_name: mask.bbox,
+        tracks.time_attr_name: frame,
+        tracks.termination_annotation_attr_name: "",
+    }
+    props = mask.regionprops
+    for key, val in zip(centroid_attr_keys, props.centroid):
+        attrs[key] = val
+    for node_attr_key in node_attr_keys:
+        if node_attr_key not in attrs:
+            attrs[node_attr_key] = getattr(props, node_attr_key, None)
+    return attrs
 
 @dataclass
 class AddNodeAction(Action):
     """Add a new node to the tracks graph."""
 
     frame: int
+    tracklet_id: int
     mask: td.nodes.Mask
     connected_node_id: int | None = None
 
     def apply(self, tracks: ActionableTracks):
         """Add a new node with the specified frame and mask."""
         node_attr_keys = tracks.graph.node_attr_keys
-        centroid_attr_keys = ["z","y","x"][-self.mask.mask.ndim:]
-
-        attrs = {
-            tracks.mask_attr_name: self.mask,
-            tracks.bbox_attr_name: self.mask.bbox,
-            tracks.time_attr_name: self.frame,
-            tracks.tracklet_id_attr_name: -1,
-            tracks.termination_annotation_attr_name: "",
-        }
-        props = self.mask.regionprops
-        for key, val in zip(centroid_attr_keys, props.centroid):
-            attrs[key] = val
-        for node_attr_key in node_attr_keys:
-            if node_attr_key not in attrs:
-                attrs[node_attr_key] = getattr(props, node_attr_key, None)
-
+        attrs = _get_mask_attrs(
+            frame=self.frame,
+            mask=self.mask,
+            node_attr_keys=node_attr_keys,
+            tracks=tracks,
+        )
+        attrs[tracks.tracklet_id_attr_name] = self.tracklet_id
         new_node_id = tracks.graph.add_node(attrs=attrs)
         if self.connected_node_id is not None:
             times = utils.get_times(
@@ -68,7 +79,6 @@ class AddNodeAction(Action):
                 tracks.graph.add_edge(self.connected_node_id, new_node_id, {})
             else:
                 tracks.graph.add_edge(new_node_id, self.connected_node_id, {})
-        tracks.assign_tracklet_ids([new_node_id])
         return new_node_id
 
 @dataclass
@@ -84,12 +94,15 @@ class RedrawMaskAction(Action):
         self.old_mask = filtered.node_attrs(attr_keys=[tracks.mask_attr_name])[
             tracks.mask_attr_name
         ].first()
+        node_attr_keys = tracks.graph.node_attr_keys
+        attrs = _get_mask_attrs(
+            mask=self.new_mask,
+            node_attr_keys=node_attr_keys,
+            tracks=tracks,
+        )
+        attrs = {k: v for k, v in attrs.items() if v is not None}
         tracks.graph.update_node_attrs(
-        # TODO calculate regionprops and other attributes
-            attrs={
-                tracks.mask_attr_name: [self.new_mask],
-                tracks.bbox_attr_name: [self.new_mask.bbox],
-            },
+            attrs=attrs,
             node_ids=[self.node_id],
         )
 
