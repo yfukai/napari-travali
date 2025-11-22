@@ -41,12 +41,13 @@ def _get_mask_attrs(*, mask: td.nodes.Mask,
         tracks.time_attr_name: frame,
         tracks.termination_annotation_attr_name: "",
     }
-    props = mask.regionprops
+    props = mask.regionprops()
     for key, val in zip(centroid_attr_keys, props.centroid):
         attrs[key] = val
     for node_attr_key in node_attr_keys:
         if node_attr_key not in attrs:
-            attrs[node_attr_key] = getattr(props, node_attr_key, None)
+            val = getattr(props, node_attr_key, None)
+            attrs[node_attr_key] = val
     return attrs
 
 @dataclass
@@ -61,6 +62,8 @@ class AddNodeAction(Action):
     def apply(self, tracks: ActionableTracks):
         """Add a new node with the specified frame and mask."""
         node_attr_keys = tracks.graph.node_attr_keys
+        node_attr_keys.remove(tracks.tracklet_id_attr_name)
+        node_attr_keys.remove(td.DEFAULT_ATTR_KEYS.NODE_ID)
         attrs = _get_mask_attrs(
             frame=self.frame,
             mask=self.mask,
@@ -68,6 +71,7 @@ class AddNodeAction(Action):
             tracks=tracks,
         )
         attrs[tracks.tracklet_id_attr_name] = self.tracklet_id
+        logger.info(str(attrs))
         new_node_id = tracks.graph.add_node(attrs=attrs)
         if self.connected_node_id is not None:
             times = utils.get_times(

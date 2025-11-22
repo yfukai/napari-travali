@@ -101,6 +101,13 @@ class StateMachineWidget(Container):
             np.zeros(self.space_like_shape, dtype=bool), 
             name="Redraw", cache=False)
 
+        if "Verified" in self._viewer.layers:
+            self._viewer.layers.remove(self._viewer.layers["Verified"])
+        self._verified_layer = self._viewer.add_labels(
+            np.zeros(self.space_like_shape, dtype=bool), 
+            name="Verified", cache=False)
+
+
     def __refresh_labels(self):
         self._gav._cache._store.clear() # Should be removed after fixing tracksdata cache update issue
         self._labels_layer.refresh()
