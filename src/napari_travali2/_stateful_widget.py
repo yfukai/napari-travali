@@ -102,7 +102,7 @@ class StateMachineWidget(Container):
         self._cropped_verified_layer = self._viewer.add_labels(
             np.zeros(self.cropped_shape, dtype=bool), 
             name="Cropped Verified", cache=False)
-        self._cropped_verified_layer.colormap = {0: (0,0,0,0), 1:(1,0,0,1), None:(0,0,0,0)}
+        self._cropped_verified_layer.colormap = {0: (0,0,0,0), None:(1,0,0,1)}
         self._cropped_verified_layer.contour = 4
 
         if "Redraw" in self._viewer.layers:
