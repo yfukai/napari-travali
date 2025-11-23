@@ -161,6 +161,9 @@ class StateMachineWidget(Container):
         self._image_layer = viewer.add_image([image, image[::2,::2]], name="Image")
         self._labels_layer = viewer.add_labels([self._track_gav, self._track_gav[::2,::2]], name="Labels")
         self._verified_layer = viewer.add_labels([self._verified_gav, self._verified_gav[::2,::2]], name="Verified", cache=False)
+        self._verified_layer.colormap = {0: (0,0,0,0), None:(1,0,0,1)}
+        self._verified_layer.contour = 4
+
         self.crop_size = crop_size
         self.tracklet_id_attr_name = tracklet_id_attr_name
         self._selected_track: _SelectedTrackInfo|None = None
