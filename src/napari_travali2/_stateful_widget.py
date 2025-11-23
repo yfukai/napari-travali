@@ -31,19 +31,21 @@ SHOW_SELECTED_LABEL_STATES = [
 LAYER_NAMES = [
     "image",
     "labels",
+    "verified",
     "cropped_image",
     "cropped_labels",
+    "cropped_verified",
     "redraw",
 ]
 @dataclass
 class _LayerConfig:
     visible_layers : list[str]
     active_layer : str 
-select_config = _LayerConfig(["cropped_image", "cropped_labels"], "cropped_labels")
+select_config = _LayerConfig(["cropped_image", "cropped_labels", "cropped_verified"], "cropped_labels")
 redraw_config = _LayerConfig(["cropped_image", "redraw"],"redraw")
 
 LAYER_CONFIGS = { 
-    ViewerState.SELECT_REGION: _LayerConfig(["image", "labels"], "labels"),
+    ViewerState.SELECT_REGION: _LayerConfig(["image", "labels","verified"], "labels"),
     ViewerState.ALL_LABEL: select_config,
     ViewerState.LABEL_SELECTED: select_config,
     ViewerState.LABEL_REDRAW: redraw_config,
@@ -95,21 +97,24 @@ class StateMachineWidget(Container):
             da.zeros(self.cropped_shape, dtype=self.label_dtype), 
             name="Cropped Labels")
 
+        if "Cropped Verified" in self._viewer.layers:
+            self._viewer.layers.remove(self._viewer.layers["Cropped Verified"])
+        self._cropped_verified_layer = self._viewer.add_labels(
+            np.zeros(self.cropped_shape, dtype=bool), 
+            name="Cropped Verified", cache=False)
+        self._cropped_verified_layer.colormap = {0: (0,0,0,0), 1:(1,0,0,1), None:(0,0,0,0)}
+        self._cropped_verified_layer.contour = 4
+
         if "Redraw" in self._viewer.layers:
             self._viewer.layers.remove(self._viewer.layers["Redraw"])
         self._redraw_layer = self._viewer.add_labels(
             np.zeros(self.space_like_shape, dtype=bool), 
             name="Redraw", cache=False)
 
-        if "Verified" in self._viewer.layers:
-            self._viewer.layers.remove(self._viewer.layers["Verified"])
-        self._verified_layer = self._viewer.add_labels(
-            np.zeros(self.space_like_shape, dtype=bool), 
-            name="Verified", cache=False)
-
 
     def __refresh_labels(self):
-        self._gav._cache._store.clear() # Should be removed after fixing tracksdata cache update issue
+        self._track_gav._cache._store.clear() # Should be removed after fixing tracksdata cache update issue
+        self._verified_gav._cache._store.clear() # Should be removed after fixing tracksdata cache update issue
         self._labels_layer.refresh()
         self._cropped_labels_layer.refresh()
 
@@ -135,41 +140,40 @@ class StateMachineWidget(Container):
                  viewer: Viewer, 
                  tracks: at.ActionableTracks,
                  image: np.ndarray,
-                 verified_track_ids=set(),
-                 candidate_track_ids=set(),
                  crop_size=1024,
                  tracklet_id_attr_name="label",
-                 *,
-                 gav = None
                  ):
         super().__init__()
 
         self._viewer = viewer
         self._tracks = tracks
         self._image = image
-        if gav is not None:
-            self._gav = gav
-        else:
-            self._gav = td.array.GraphArrayView(tracks.graph, 
-                                                shape=tuple(image.shape), 
-                                                attr_key=tracklet_id_attr_name)
+        self._track_gav = td.array.GraphArrayView(
+            tracks.graph, 
+            shape=tuple(image.shape), 
+            attr_key=tracklet_id_attr_name
+        )
+        self._verified_gav = td.array.GraphArrayView(
+            tracks.graph, 
+            shape=tuple(image.shape), 
+            attr_key="verified"
+        )
         self._image_layer = viewer.add_image([image, image[::2,::2]], name="Image")
-        self._labels_layer = viewer.add_labels([self._gav, self._gav[::2,::2]], name="Labels")
+        self._labels_layer = viewer.add_labels([self._track_gav, self._track_gav[::2,::2]], name="Labels")
+        self._verified_layer = viewer.add_labels([self._verified_gav, self._verified_gav[::2,::2]], name="Verified", cache=False)
         self.crop_size = crop_size
         self.tracklet_id_attr_name = tracklet_id_attr_name
-        self.verified_track_ids = set(map(int,verified_track_ids))
-        self.candidate_track_ids = set(map(int,candidate_track_ids))
         self._selected_track: _SelectedTrackInfo|None = None
 
-        self.time_like_shape = self._gav.shape[:-2]
-        self.space_like_shape = self._gav.shape[-2:]
+        self.time_like_shape = self._track_gav.shape[:-2]
+        self.space_like_shape = self._track_gav.shape[-2:]
         self.image_dtype = image.dtype.name
-        self.label_dtype = self._gav.dtype
+        self.label_dtype = self._track_gav.dtype
         self.cropped_shape = (*self.time_like_shape, crop_size, crop_size)
 
         logger.info("StateMachineWidget initialized.")
         logger.info(f"Image dtype: {self.image_dtype}, Label dtype: {self.label_dtype}")
-        logger.info(f"Image shape: {self._image.shape}, GAV shape: {self._gav.shape}")
+        logger.info(f"Image shape: {self._image.shape}, GAV shape: {self._track_gav.shape}")
         logger.info(f"Cropped shape: {self.cropped_shape}")
         logger.info(f"Time-like shape: {self.time_like_shape}, Space-like shape: {self.space_like_shape}")
 
@@ -229,42 +233,7 @@ class StateMachineWidget(Container):
             self.__bind_mouse_events()
             # XXX better if I can set the viewer.dims not to change
     
-#    def update_finalized_point_layer(self):
-#        empty_df = pd.DataFrame(columns=["frame","min_y","min_x","max_y","max_x","track_id"])
-#        verified_positions = [
-#            self.ta._get_track_bboxes(track_id) for track_id in self.verified_track_ids
-#        ]
-#        candidate_positions = [
-#            self.ta._get_track_bboxes(track_id) for track_id in self.candidate_track_ids
-#        ]
-#
-#        points_df = pd.concat(verified_positions).reset_index()\
-#            if verified_positions else empty_df
-#        points_df2 = pd.concat(candidate_positions).reset_index()\
-#            if candidate_positions else empty_df
-#        points_df = pd.concat([
-#            points_df.assign(finalized=True), 
-#            points_df2.assign(finalized=False)
-#        ])
-#            
-#        points_df["y"] = (points_df["min_y"] + points_df["max_y"]) / 2
-#        points_df["x"] = (points_df["min_x"] + points_df["max_x"]) / 2
-#        
-#        if "Finalized" in self._viewer.layers:
-#            self._viewer.layers.remove(self._viewer.layers["Finalized"])
-#        
-#        self._viewer.add_points(
-#            points_df[["frame","y","x"]],
-#            properties={"finalized":points_df["finalized"].values},
-#            border_color='finalized',
-#            border_color_cycle=['magenta', 'green'],
-#            name="Finalized",size=75, 
-#            face_color="transparent", 
-#            border_width=0.15)
-#    
-#        # XXX Should be automatically updated by the state machine?
-#        self.update_viewer_status()
-    
+
     @log_error
     def set_default_colormap(self):
         self._cropped_labels_layer.colormap = default_colormap()
@@ -292,7 +261,7 @@ class StateMachineWidget(Container):
         logger.debug(f"world coordinates: {event.position}")
         logger.debug(f"data coordinates: {data_coordinates}")
         #track_id = find_track_by_coordinates(self._gav._spatial_filter, data_coordinates)
-        track_id = int(np.asarray(self._gav[self.window][tuple([int(round(c)) for c in data_coordinates])]))
+        track_id = int(np.asarray(self._track_gav[self.window][tuple([int(round(c)) for c in data_coordinates])]))
         if track_id == 0:
             logger.info("No track found.")
             return
@@ -325,17 +294,20 @@ class StateMachineWidget(Container):
         logger.info(f"Region selected: coords {coords}")
         window = (slice(None),
                   slice(max(0,coords[1]-self.crop_size//2),
-                        min(coords[1]+self.crop_size//2,self._gav.shape[-2])), 
+                        min(coords[1]+self.crop_size//2,self._track_gav.shape[-2])), 
                   slice(max(0,coords[2]-self.crop_size//2),
-                        min(coords[2]+self.crop_size//2,self._gav.shape[-1])))
+                        min(coords[2]+self.crop_size//2,self._track_gav.shape[-1])))
         self.window = window
         logger.info(f"window selected: {window}")
         translate = [0]+[s.start for s in window[1:]]
         self._cropped_image_layer.data = self._image[window]
         self._cropped_image_layer.translate = translate
-        cropped_label = self._gav[window]
+        cropped_label = self._track_gav[window]
         self._cropped_labels_layer.data = cropped_label
         self._cropped_labels_layer.translate = translate
+        cropped_verified = self._verified_gav[window]
+        self._cropped_verified_layer.data = cropped_verified
+        self._cropped_verified_layer.translate = translate
 
     ################ Common utilities ################
     @log_error
@@ -423,7 +395,7 @@ class StateMachineWidget(Container):
         assert self._selected_track is not None, "No selected track."
         self._redraw_layer.data = np.zeros_like(self._redraw_layer.data)
         iT = self._viewer.dims.current_step[0]
-        cropped_label_frame = np.asarray(self._gav[self.window][iT])
+        cropped_label_frame = np.asarray(self._track_gav[self.window][iT])
         self._redraw_layer.data[self.window[1:]] = (cropped_label_frame == self._selected_track.track_id).astype(bool)
 
     @log_error
