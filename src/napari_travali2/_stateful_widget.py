@@ -156,7 +156,8 @@ class StateMachineWidget(Container):
         self._verified_gav = td.array.GraphArrayView(
             tracks.graph, 
             shape=tuple(image.shape), 
-            attr_key="verified"
+            attr_key="verified",
+            dtype=np.uint8,
         )
         self._image_layer = viewer.add_image([image, image[::2,::2]], name="Image")
         self._labels_layer = viewer.add_labels([self._track_gav, self._track_gav[::2,::2]], name="Labels")
