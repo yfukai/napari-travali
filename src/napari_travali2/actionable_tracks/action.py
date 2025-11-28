@@ -104,7 +104,7 @@ class RedrawMaskAction(Action):
             node_attr_keys=node_attr_keys,
             tracks=tracks,
         )
-        attrs = {k: v for k, v in attrs.items() if v is not None}
+        attrs = {k: [v] for k, v in attrs.items() if v is not None}
         tracks.graph.update_node_attrs(
             attrs=attrs,
             node_ids=[self.node_id],
