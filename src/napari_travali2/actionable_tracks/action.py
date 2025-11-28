@@ -45,6 +45,8 @@ def _get_mask_attrs(*, mask: td.nodes.Mask,
     for key, val in zip(centroid_attr_keys, props.centroid):
         attrs[key] = val
     for node_attr_key in node_attr_keys:
+        if node_attr_key == "label":
+            continue  # label is not a property we set here
         if node_attr_key not in attrs:
             val = getattr(props, node_attr_key, None)
             attrs[node_attr_key] = val
