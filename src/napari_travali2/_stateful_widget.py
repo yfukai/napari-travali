@@ -102,8 +102,8 @@ class StateMachineWidget(Container):
         self._cropped_verified_layer = self._viewer.add_labels(
             np.zeros(self.cropped_shape, dtype=bool), 
             name="Cropped Verified", cache=False)
-        self._cropped_verified_layer.colormap = {0: (0,0,0,0), None:(1,0,0,1)}
-        self._cropped_verified_layer.contour = 4
+        self._cropped_verified_layer.colormap = {0: (0,0,0,0), None:self.verified_layer_color}
+        self._cropped_verified_layer.contour = self.verified_layer_contour
 
         if "Redraw" in self._viewer.layers:
             self._viewer.layers.remove(self._viewer.layers["Redraw"])
@@ -117,6 +117,8 @@ class StateMachineWidget(Container):
         self._verified_gav._cache._store.clear() # Should be removed after fixing tracksdata cache update issue
         self._labels_layer.refresh()
         self._cropped_labels_layer.refresh()
+        self._verified_layer.refresh()
+        self._cropped_verified_layer.refresh()
 
     def __bind_events(self):
         # XXX possibly refactor this
@@ -142,6 +144,8 @@ class StateMachineWidget(Container):
                  image: np.ndarray,
                  crop_size=1024,
                  tracklet_id_attr_name="label",
+                 verified_layer_color = (1,0,1,1),
+                 verified_layer_contour = 4
                  ):
         super().__init__()
 
@@ -162,8 +166,10 @@ class StateMachineWidget(Container):
         self._image_layer = viewer.add_image([image, image[::2,::2]], name="Image")
         self._labels_layer = viewer.add_labels([self._track_gav, self._track_gav[::2,::2]], name="Labels")
         self._verified_layer = viewer.add_labels([self._verified_gav, self._verified_gav[::2,::2]], name="Verified", cache=False)
-        self._verified_layer.colormap = {0: (0,0,0,0), None:(1,0,0,1)}
-        self._verified_layer.contour = 4
+        self.verified_layer_color = verified_layer_color
+        self.verified_layer_contour = verified_layer_contour
+        self._verified_layer.colormap = {0: (0,0,0,0), None: self.verified_layer_color}
+        self._verified_layer.contour = self.verified_layer_contour
 
         self.crop_size = crop_size
         self.tracklet_id_attr_name = tracklet_id_attr_name
@@ -257,10 +263,9 @@ class StateMachineWidget(Container):
     def _track_clicked_wrapper(self, viewer, event):
         if self.state == ViewerState.SELECT_REGION:
             return # Does nothing if the state is "select region"
-        logger.info(event.modifiers)
-        logger.info("Track clicked")
+        logger.debug(f"Track clicked. Modifiers: {event.modifiers}")
         yield  # important to avoid a potential bug when selecting the daughter
-        logger.info("button released")
+        logger.debug("button released")
         data_coordinates = self._cropped_labels_layer.world_to_data(event.position)
         logger.debug(f"world coordinates: {event.position}")
         logger.debug(f"data coordinates: {data_coordinates}")
@@ -270,17 +275,13 @@ class StateMachineWidget(Container):
             logger.info("No track found.")
             return
         logger.info(f"Track ID: {track_id}")
-        self.track_clicked(track_id) # trigger the state machine transition
-#            if "Control" in event.modifiers:
-#                logger.info("Control pressed, removing from the verified or candidate list")
-#                self.verified_track_ids.discard(int(val))
-#                self.candidate_track_ids.discard(int(val))
-#                self.update_finalized_point_layer()
-#                self._write_verified_and_candidates()
-#            else:
-#                frame = coords[0]
-#                logger.info(f"clicked at {coords} at frame {frame} and label value {val}")
-#                
+        if "Control" in event.modifiers:
+            logger.info("Control pressed, removing from the verified or candidate list")
+            self.devalidate_track(track_id)
+            self.__refresh_labels()
+        else:
+            self.track_clicked(track_id) # trigger the state machine transition
+                
         
     @log_error
     def _region_clicked_wrapper(self, viewer, event):
@@ -363,20 +364,17 @@ class StateMachineWidget(Container):
         })
         #self.verified_track_ids.add(int(self._selected_track.track_id))
         # XXX implement removal of previous daughters from candidate list
-#        for track_id in self.original_splits.get(int(self._selected_track.tra), []):
-#            logger.info(f"Previous daughter {track_id} removed from the candidate list")
-#            self.candidate_track_ids.discard(int(track_id))
-        #self.candidate_track_ids.discard(int(self._selected_track.track_id))
-        #self.candidate_track_ids.update(map(int,set(self._selected_track.daughter_track_ids)
-        #                                    -set(self.verified_track_ids)))
 
-        ## XXX : Maybe in another thread? Make it sure that this happens surely independent of the main thread exit, and in the correct order.
-        #self.ta.attrs["verified_track_ids"] = list(self.verified_track_ids)
-        #self.ta.attrs["candidate_track_ids"] = list(self.candidate_track_ids)
-        #self.ta.write_properties()   
-        #self.txn.commit_sync()
-        
-        #self.update_finalized_point_layer()
+
+    @log_error
+    def devalidate_track(self, track_id):
+        logger.info(f"Devalidating track ID: {track_id}")
+        subgraph = self._tracks.graph.filter(
+            td.NodeAttr(self.tracklet_id_attr_name) == track_id
+        ).subgraph()
+        subgraph.update_node_attrs(attrs={
+            "verified":False
+        })
     
     @log_error    
     def abort_transaction(self):
